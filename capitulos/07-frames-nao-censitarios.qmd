@@ -1,0 +1,236 @@
+---
+title: "Frames com variáveis não censitárias"
+description: "Como incluir na pós-estratificação uma variável cuja distribuição conjunta com as demais não é conhecida: junta completa, pós-estratificação sintética, modelagem pelo survey e calibração a margens."
+eyebrow: "Capítulo 07"
+---
+
+{{< include _aviso-ia.qmd >}}
+
+```{r}
+#| label: c7-setup
+#| include: false
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+source(here::here("R/mundo.R"))
+source(here::here("R/mundo_religiao.R"))
+source(here::here("R/utils.R"))
+suppressMessages({
+  library(tidyverse)
+  library(lme4)
+  library(nnet)
+  library(gt)
+})
+theme_set(theme_notes())
+mundo <- carregar_mundo_religiao()
+pop   <- mundo$pop
+```
+
+## Intuição
+
+O [capítulo 1](01-amostras-nao-probabilisticas.qmd) mostrou que nenhuma correção remove o viés de uma seleção que dependa de algo fora do _frame_. Em pesquisas brasileiras, a religião é o exemplo mais evidente: os evangélicos votam de forma diferente dos católicos e podem participar menos de painéis _online_, mas a PNAD Contínua, fonte habitual dos _frames_, não pergunta religião. Se a religião afeta a participação e o desfecho, é preciso incluí-la no modelo e na pós-estratificação.
+
+Incluí-la no modelo é fácil, porque o _survey_ pergunta a religião. O difícil é o _frame_: para pós-estratificar, é preciso saber quantas pessoas há em cada combinação de UF, sexo, idade, escolaridade, cor/raça e religião. Às vezes essa distribuição conjunta existe, como nos microdados do Censo. Muitas vezes só se conhecem algumas margens, como a religião por UF ou por sexo e idade. Este capítulo compara as saídas para essa situação.
+
+## Formalização
+
+Seja $Z$ a variável não censitária (a religião) e $X$ as variáveis do _frame_ base. A seleção é ignorável dado $(X, Z)$, mas não dado $X$ apenas. O estimador precisa de $N_{c,z}$, o número de pessoas na célula $c$ de $X$ com o valor $z$ de $Z$:
+
+$$
+\hat{\theta} = \frac{\sum_c \sum_z N_{c,z}\, \hat{\pi}_{c,z}}{\sum_c \sum_z N_{c,z}}, \qquad
+\hat{\pi}_{c,z} = \text{logit}^{-1}\!\big(\hat{\beta}_0 + \mathbf{x}_c^\top \hat{\boldsymbol{\beta}} + \hat{\gamma}_z + \hat{\alpha}_{j[c]}\big).
+$$
+
+Escrevendo $N_{c,z} = N_c \Pr(Z = z \mid X = c)$, o problema é conhecer a distribuição condicional de $Z$ dentro de cada célula. Há quatro maneiras.
+
+1. **Junta completa.** Com microdados que tragam $X$ e $Z$ ao mesmo tempo, como a amostra do Censo, $N_{c,z}$ é observado diretamente.
+2. **Pós-estratificação sintética.** @leemann2017extending propõem supor que, dentro de cada UF, $Z$ é independente das demais variáveis: $\Pr(Z = z \mid X = c) \approx \Pr(Z = z \mid \text{UF} = j[c])$, que vem de uma margem publicada. Num modelo linear aditivo, a estimativa pós-estratificada depende só das margens de cada variável, e a junta sintética dá exatamente o mesmo resultado que a verdadeira. Num modelo logístico, a aproximação piora quando $Z$ é muito associada às outras variáveis e os efeitos são grandes.
+3. **Modelar $Z$ com o _survey_.** Estima-se $\Pr(Z \mid X)$ com os respondentes (por exemplo, com uma regressão multinomial; no exemplo abaixo, com a região no lugar da UF, porque UFs pequenas podem faltar na amostra) e expande-se o _frame_ [@kastellec2015polarizing]. Isso supõe que a relação entre $Z$ e $X$ na amostra é a da população, o que falha justamente quando a seleção depende de $Z$.
+4. **Calibrar a junta.** Parte-se de uma distribuição conjunta inicial (a do item 3, por exemplo) e ajusta-se por _raking_ até que ela reproduza as margens conhecidas de $Z$ (por UF, por sexo e idade, por cor/raça), mantendo os totais $N_c$ do _frame_ base [@kuriwaki2024geography]. A calibração corrige a composição de $Z$ nas dimensões em que há margens, mas não nas combinações que nenhuma margem cobre. @li2024embedded e @pitts2025multilevel propõem versões em que as células desconhecidas são estimadas dentro do próprio modelo.
+
+## Em R
+
+### O mundo com religião
+
+Cada pessoa do mundo sintético recebe uma religião, sorteada com as probabilidades do Censo 2022 dentro de sua célula de UF, sexo, faixa etária, escolaridade e cor/raça (microdados públicos da amostra, agregados em [`dados/censo2022_religiao.rds`](https://github.com/felipelmc/MrP/blob/main/dados/censo2022_religiao.rds)). Um desfecho novo, `y_rel`, soma aos efeitos dos capítulos anteriores um efeito fictício da religião, e a propensão de participar do painel é multiplicada por um fator que depende da religião (definidos em [`R/mundo_religiao.R`](https://github.com/felipelmc/MrP/blob/main/R/mundo_religiao.R)).
+
+```{r}
+#| label: c7-mundo
+EFEITOS_RELIGIAO
+SELECAO_RELIGIAO
+
+set.seed(42)
+amostra <- amostrar_optin_rel(pop, n = 2000)
+bind_rows(População = count(pop, religiao_4cat), Amostra = count(amostra, religiao_4cat),
+          .id = "fonte") |>
+  group_by(fonte) |> mutate(p = n / sum(n)) |> select(-n) |>
+  pivot_wider(names_from = religiao_4cat, values_from = p)
+```
+
+Os evangélicos, que têm a atitude com menos frequência, participam menos do painel; as pessoas sem religião, que a têm com mais frequência, participam mais. As duas coisas empurram a média bruta para cima, e nenhuma variável do _frame_ base capta isso.
+
+### Cinco _frames_ num Monte Carlo
+
+O Monte Carlo ajusta dois modelos em 200 amostras: o de efeitos fixos sem religião (o do [capítulo 3](03-estimador-mrp.qmd)) e o mesmo modelo com a religião como efeito fixo. O modelo com religião é pós-estratificado com quatro _frames_, um para cada saída da seção anterior. As margens usadas na pós-estratificação sintética e na calibração são as que um analista encontraria publicadas: religião por UF, por sexo e faixa etária e por cor/raça.
+
+```{r}
+#| label: c7-frames
+vars_rel <- c(VARS_FRAME, "religiao_4cat")
+# regiao de cada UF, usada no modelo multinomial (UFs pequenas podem faltar na amostra)
+uf_regiao <- c(
+  "Rondônia" = "Norte", "Acre" = "Norte", "Amazonas" = "Norte", "Roraima" = "Norte",
+  "Pará" = "Norte", "Amapá" = "Norte", "Tocantins" = "Norte", "Maranhão" = "Nordeste",
+  "Piauí" = "Nordeste", "Ceará" = "Nordeste", "Rio Grande do Norte" = "Nordeste",
+  "Paraíba" = "Nordeste", "Pernambuco" = "Nordeste", "Alagoas" = "Nordeste",
+  "Sergipe" = "Nordeste", "Bahia" = "Nordeste", "Minas Gerais" = "Sudeste",
+  "Espírito Santo" = "Sudeste", "Rio de Janeiro" = "Sudeste", "São Paulo" = "Sudeste",
+  "Paraná" = "Sul", "Santa Catarina" = "Sul", "Rio Grande do Sul" = "Sul",
+  "Mato Grosso do Sul" = "Centro-Oeste", "Mato Grosso" = "Centro-Oeste",
+  "Goiás" = "Centro-Oeste", "Distrito Federal" = "Centro-Oeste")
+pop <- pop |> mutate(regiao = factor(uf_regiao[estado]))
+frame_base  <- frame_populacao(pop)
+frame_junta <- frame_populacao(pop, vars_rel)
+
+# margens publicadas (calculadas na populacao)
+margem <- function(vars) pop |> count(across(all_of(c(vars, "religiao_4cat"))), name = "M")
+margens_rel <- list(uf = margem("estado"), sexo_idade = margem(c("sexo", "faixa_etaria")),
+                    raca = margem("cor_raca"))
+```
+
+```{r}
+#| label: c7-raking-junta
+# raking de uma junta inicial (celula x religiao) para as margens publicadas,
+# preservando os totais de cada celula do frame base
+calibrar_junta <- function(fr, iter = 30) {
+  totais_celula <- frame_base |> rename(N_celula = N)
+  for (k in seq_len(iter)) {
+    for (m in margens_rel) {
+      vars <- setdiff(names(m), "M")
+      fr <- fr |>
+        group_by(across(all_of(vars))) |> mutate(soma = sum(N)) |> ungroup() |>
+        left_join(m, by = vars) |> mutate(N = N * M / soma) |> select(-soma, -M)
+    }
+    fr <- fr |>
+      group_by(across(all_of(VARS_FRAME))) |> mutate(soma = sum(N)) |> ungroup() |>
+      left_join(totais_celula, by = VARS_FRAME) |> mutate(N = N * N_celula / soma) |>
+      select(-soma, -N_celula)
+  }
+  fr
+}
+
+# pos-estratificacao sintetica: P(z | UF)
+p_uf <- margens_rel$uf |> group_by(estado) |> mutate(p = M / sum(M)) |> ungroup() |> select(-M)
+frame_sintetico <- frame_base |>
+  left_join(p_uf, by = "estado", relationship = "many-to-many") |>
+  mutate(N = N * p) |> select(-p)
+```
+
+```{r}
+#| label: c7-monte-carlo
+dims_c7 <- c("religiao_4cat", "escolaridade_3cat", "cor_raca")
+verdades_c7 <- bind_rows(
+  tibble(estimando = "Total", verdade = mean(pop$y_rel)),
+  map_dfr(dims_c7, \(v) pop |> group_by(nivel = as.character(.data[[v]])) |>
+            summarise(verdade = mean(y_rel)) |>
+            transmute(estimando = paste0(v, ": ", nivel), verdade))
+)
+
+agregar_c7 <- function(m, fr) {
+  fr$pi <- predict(m, fr, type = "response", allow.new.levels = TRUE)
+  dims <- intersect(dims_c7, names(fr))
+  bind_rows(
+    tibble(estimando = "Total", est = sum(fr$pi * fr$N) / sum(fr$N)),
+    map_dfr(dims, \(v) fr |> group_by(nivel = as.character(.data[[v]])) |>
+              summarise(est = sum(pi * N) / sum(N)) |>
+              transmute(estimando = paste0(v, ": ", nivel), est))
+  )
+}
+
+estimar_c7 <- function(r) {
+  a <- amostrar_optin_rel(pop)
+  controle <- glmerControl(optimizer = "bobyqa")
+  m_sem <- suppressMessages(glmer(
+    y_rel ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado),
+    data = a, family = binomial, control = controle))
+  m_com <- suppressMessages(glmer(
+    y_rel ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + religiao_4cat + (1 | estado),
+    data = a, family = binomial, control = controle))
+  # P(z | X) estimada com os respondentes
+  mult <- multinom(religiao_4cat ~ regiao + sexo + faixa_etaria + escolaridade_3cat + cor_raca,
+                   data = a, trace = FALSE, MaxNWts = 5000)
+  p_survey <- frame_base |> select(all_of(VARS_FRAME)) |>
+    bind_cols(as_tibble(predict(mult, mutate(frame_base, regiao = factor(uf_regiao[estado])),
+                                type = "probs"))) |>
+    pivot_longer(all_of(RELIGIOES), names_to = "religiao_4cat", values_to = "p") |>
+    mutate(religiao_4cat = factor(religiao_4cat, levels = RELIGIOES))
+  frame_modelado <- frame_base |>
+    left_join(p_survey, by = VARS_FRAME, relationship = "one-to-many") |>
+    mutate(N = N * p) |> select(-p)
+  bind_rows(
+    "Sem religião no modelo"                 = agregar_c7(m_sem, frame_base),
+    "Junta completa"                         = agregar_c7(m_com, frame_junta),
+    "Pós-estratificação sintética"           = agregar_c7(m_com, frame_sintetico),
+    "Religião modelada pelo survey"          = agregar_c7(m_com, frame_modelado),
+    "Religião modelada e calibrada a margens" = agregar_c7(m_com, calibrar_junta(frame_modelado)),
+    .id = "metodo") |>
+    mutate(replica = r)
+}
+
+mc7 <- com_cache("c7_monte_carlo",
+                 list(mundo$chave, 200, deparse(estimar_c7), deparse(calibrar_junta),
+                      deparse(agregar_c7)),
+                 monte_carlo(200, estimar_c7))
+
+res_c7 <- mc7 |>
+  left_join(verdades_c7, by = "estimando") |>
+  group_by(metodo, estimando) |>
+  summarise(vies = 100 * mean(est - verdade), reqm = 100 * sqrt(mean((est - verdade)^2)),
+            .groups = "drop") |>
+  mutate(dimensao = if_else(estimando == "Total", "Total", sub(":.*$", "", estimando)))
+```
+
+```{r}
+#| label: tbl-c7-mc
+#| tbl-cap: "Viés da estimativa nacional e viés absoluto médio por religião, escolaridade e cor/raça (pontos percentuais), em 200 amostras opt-in em que a participação depende da religião."
+ordem_c7 <- c("Sem religião no modelo", "Junta completa", "Pós-estratificação sintética",
+              "Religião modelada pelo survey", "Religião modelada e calibrada a margens")
+res_c7 |>
+  group_by(metodo, dimensao) |>
+  summarise(valor = if_else(first(dimensao) == "Total", mean(vies), mean(abs(vies))),
+            .groups = "drop") |>
+  mutate(dimensao = recode(dimensao, Total = "Nacional", religiao_4cat = "Religião",
+                           escolaridade_3cat = "Escolaridade", cor_raca = "Cor/raça"),
+         metodo = factor(metodo, levels = ordem_c7)) |>
+  pivot_wider(names_from = dimensao, values_from = valor) |>
+  arrange(metodo) |>
+  select(metodo, Nacional, Religião, Escolaridade, `Cor/raça`) |>
+  gt() |>
+  fmt_number(-metodo, decimals = 2, dec_mark = ",") |>
+  sub_missing(missing_text = "—") |>
+  cols_label(metodo = "Método") |>
+  tab_spanner(label = "Viés absoluto médio", columns = c(Religião, Escolaridade, `Cor/raça`))
+```
+
+```{r}
+#| label: c7-valores
+#| include: false
+v7 <- function(m, e = "Total") res_c7$vies[res_c7$metodo == m & res_c7$estimando == e]
+va7 <- function(m, d) mean(abs(res_c7$vies[res_c7$metodo == m & res_c7$dimensao == d]))
+```
+
+Sem a religião no modelo, a estimativa nacional erra `r num(v7("Sem religião no modelo"), 2)` pp, e o erro não vem de nenhuma das variáveis do _frame_: é o viés de seleção fora do _frame_ do [capítulo 1](01-amostras-nao-probabilisticas.qmd). Com a religião no modelo e a junta completa, o viés cai para `r num(v7("Junta completa"), 2)` pp, e as estimativas por religião ficam com viés absoluto médio de `r num(va7("Junta completa", "religiao_4cat"), 2)` pp.
+
+A pós-estratificação sintética, que supõe a religião independente das demais variáveis dentro de cada UF, fica com `r num(v7("Pós-estratificação sintética"), 2)` pp no total e `r num(va7("Pós-estratificação sintética", "religiao_4cat"), 2)` pp por religião. Modelar a religião com o próprio _survey_ reproduz na expansão do _frame_ a composição religiosa distorcida da amostra, com viés de `r num(v7("Religião modelada pelo survey"), 2)` pp. Calibrar essa junta às margens publicadas reduz o viés para `r num(v7("Religião modelada e calibrada a margens"), 2)` pp.
+
+No total nacional, a pós-estratificação sintética e a calibração chegam perto da junta completa neste mundo, em que a religião se soma aos demais efeitos na escala logit. Nas estimativas por religião, a diferença aparece: a sintética erra `r num(va7("Pós-estratificação sintética", "religiao_4cat"), 2)` pp em média, a calibrada `r num(va7("Religião modelada e calibrada a margens", "religiao_4cat"), 2)` pp e a junta completa `r num(va7("Junta completa", "religiao_4cat"), 2)` pp. Supor a religião independente das demais variáveis dentro da UF erra a composição de cada grupo religioso (os evangélicos, por exemplo, não têm a mesma escolaridade dos católicos), e as estimativas desses grupos herdam o erro.
+
+A lição prática é que o _survey_ não serve para estimar a distribuição populacional da variável que está distorcendo a amostra; é preciso ao menos uma margem populacional dela, e, para estimar os próprios grupos dessa variável, de preferência a junta completa ou várias margens cruzadas.
+
+## Armadilhas
+
+- Uma variável que afeta a participação e o desfecho, mas fica fora do modelo e do _frame_, deixa um viés que nenhuma especificação corrige. Antes de escolher o _frame_, pergunte que variáveis podem estar distorcendo o painel.
+- O _survey_ não informa a distribuição populacional das variáveis pelas quais foi selecionado. Modelar $\Pr(Z \mid X)$ com os respondentes só funciona se a seleção não depender de $Z$ dado $X$.
+- A independência da pós-estratificação sintética é uma hipótese forte fora dos modelos lineares aditivos. Com interações entre $Z$ e as outras variáveis, prefira a calibração a várias margens ou a junta completa.
+- As categorias de $Z$ precisam ser as mesmas no _survey_ e na fonte das margens. Um questionário sem a opção "espírita", por exemplo, não é comparável a um censo que tem essa categoria sem um mapa explícito entre as duas classificações ([capítulo 6](06-harmonizacao-faltantes.qmd)).
+
+## Leituras
+
+@leemann2017extending introduzem a pós-estratificação sintética e mostram quando ela equivale à junta verdadeira. @kastellec2015polarizing incluem no MrP uma variável não censitária (a identificação partidária) modelada a partir de pesquisas. @kuriwaki2024geography calibram estimativas a totais eleitorais conhecidos por distrito. @li2024embedded e @pitts2025multilevel tratam de _frames_ em que só se conhecem margens, e @lopezmartin2022multilevel têm um estudo de caso sobre variáveis não censitárias com código em R.

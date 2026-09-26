@@ -1,51 +1,44 @@
-# Course Notes · configuração do curso.
-# O grosso da configuração (tema, fontes, navbar, freeze, idioma) vem da extensão
-# em _extensions/felipelmc/course-notes. Aqui ficam só os dados deste curso.
 project:
   type: course-notes
   render:
     - index.qmd
-    - guia/*.qmd
-    - aulas/*.qmd
-    - listas/*.qmd
-    - trabalhos/index.qmd
-    - trabalhos/*/index.qmd
+    - capitulos/*.qmd
     - referencias.qmd
 
 book:
-  title: "Course Notes"
-  subtitle: "Um template para anotações de disciplina"
+  title: "MrP"
+  subtitle: "Regressão multinível com pós-estratificação"
   author: "Felipe Lamarca"
   date: last-modified
-  site-url: https://felipelamarca.com/Course-Notes-Template/
-  repo-url: https://github.com/felipelmc/Course-Notes-Template
+  site-url: https://felipelamarca.com/MrP/
+  repo-url: https://github.com/felipelmc/MrP
   repo-actions: [source, issue]
   navbar:
     left:
-      - text: "Course Notes"
+      - text: "MrP"
         href: index.qmd
   chapters:
     - index.qmd
-    - part: "Guia"
+    - part: "Estudo"
       chapters:
-        - guia/comecando.qmd
-        - guia/escrita.qmd
-        - guia/componentes.qmd
-        - guia/simulacoes.qmd
-        - guia/trabalhos.qmd
-        - guia/publicacao.qmd
-    - part: "Aulas"
-      chapters:
-        - href: aulas/aula-01.qmd
-          text: "01 · O grande experimento de Snow"
-    - part: "Listas"
-      chapters:
-        - listas/index.qmd
-    - part: "Trabalhos"
-      chapters:
-        - trabalhos/index.qmd
-        - trabalhos/snow-tabela-ix/index.qmd
-        - trabalhos/apresentacao/index.qmd
+        - href: capitulos/01-amostras-nao-probabilisticas.qmd
+          text: "01 · Amostras não probabilísticas"
+        - href: capitulos/02-modelos-multinivel.qmd
+          text: "02 · Modelos multinível"
+        - href: capitulos/03-estimador-mrp.qmd
+          text: "03 · O estimador MrP"
+        - href: capitulos/04-mrp-bayesiano.qmd
+          text: "04 · MrP bayesiano e incerteza"
+        - href: capitulos/05-especificacao-validacao.qmd
+          text: "05 · Especificação e validação"
+        - href: capitulos/06-harmonizacao-faltantes.qmd
+          text: "06 · Harmonização e dados faltantes"
+        - href: capitulos/07-frames-nao-censitarios.qmd
+          text: "07 · Variáveis fora do censo"
+        - href: capitulos/08-alem-do-binario.qmd
+          text: "08 · Além do desfecho binário"
+        - href: capitulos/09-alternativas-sensibilidade.qmd
+          text: "09 · Alternativas e sensibilidade"
     - referencias.qmd
 
 bibliography: [references.bib]

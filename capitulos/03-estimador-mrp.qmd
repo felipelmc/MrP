@@ -1,0 +1,402 @@
+---
+title: "O estimador MrP e estimativas para subgrupos"
+description: "Os dois passos do MrP, por que ele funciona, sua leitura como ponderação implícita e as estimativas para subgrupos."
+eyebrow: "Capítulo 03"
+---
+
+{{< include _aviso-ia.qmd >}}
+
+```{r}
+#| label: c3-setup
+#| include: false
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+source(here::here("R/mundo.R"))
+source(here::here("R/utils.R"))
+suppressMessages({
+  library(tidyverse)
+  library(lme4)
+  library(survey)
+  library(gt)
+})
+theme_set(theme_notes())
+mundo <- carregar_mundo()
+pop   <- mundo$pop
+frame <- frame_populacao(pop)
+```
+
+## Intuição
+
+O [capítulo 1](01-amostras-nao-probabilisticas.qmd) mostrou que a pós-estratificação corrige a composição da amostra, mas esbarra em células vazias. O [capítulo 2](02-modelos-multinivel.qmd) mostrou que um modelo multinível produz estimativas estáveis para grupos com poucos dados. O MrP junta as duas ideias. Primeiro, um modelo estima a atitude esperada em cada célula do _frame_ a partir das características que a definem. Depois, as estimativas das células são somadas com o peso que cada célula tem na população.
+
+O modelo resolve o problema das células vazias. Uma célula sem respondentes, como a dos homens pardos de 65 anos ou mais, com ensino fundamental, no Piauí, recebe uma predição montada a partir dos efeitos de cada uma dessas características, estimados com todos os respondentes que compartilham cada uma delas. A pós-estratificação resolve o problema da composição: não importa que a amostra tenha poucas pessoas com ensino fundamental, porque na soma final essas células pesam o que pesam na população.
+
+## Formalização
+
+### Os dois passos
+
+O primeiro passo é uma regressão multinível. Na forma mais usada, com efeitos fixos para as variáveis demográficas e intercepto aleatório por UF,
+
+$$
+\text{logit}(\pi_i) = \beta_0 + \mathbf{x}_i^\top \boldsymbol{\beta} + \alpha^{(\text{UF})}_{j[i]},
+\qquad \alpha^{(\text{UF})}_j \sim \mathcal{N}(0, \tau^2),
+$$ {#eq-modelo5}
+
+onde $\mathbf{x}_i$ contém indicadores de escolaridade, cor/raça, sexo e faixa etária.
+
+O segundo passo é a pós-estratificação. Para cada célula $c$ do _frame_, com vetor de características $\mathbf{x}_c$, UF $j[c]$ e tamanho populacional $N_c$, calcula-se a probabilidade predita e agrega-se.
+
+::: {#def-mrp}
+## Estimador MrP
+$$
+\hat{\pi}_c = \text{logit}^{-1}\!\left(\hat{\beta}_0 + \mathbf{x}_c^\top \hat{\boldsymbol{\beta}} + \hat{\alpha}^{(\text{UF})}_{j[c]}\right),
+\qquad
+\boxed{\hat{\theta}^{\text{MRP}} = \frac{\sum_c N_c\, \hat{\pi}_c}{\sum_c N_c}}
+$$
+:::
+
+### Por que funciona
+
+O teorema de identificação do [capítulo 1](01-amostras-nao-probabilisticas.qmd) diz que, sob ignorabilidade, positividade e composição,
+
+$$
+\theta = \sum_{x} \Pr(X = x)\, \mathbb{E}[Y \mid X = x, R = 1].
+$$
+
+O MrP é essa fórmula com as médias das células substituídas pelas predições do modelo. A justificativa tem duas partes.
+
+A primeira é que, sob ignorabilidade condicional ($Y \perp\!\!\!\perp R \mid X$), a relação entre $X$ e $Y$ na amostra é a mesma da população. A seleção distorce a distribuição de $X$ entre os respondentes, mas não a distribuição de $Y$ dado $X$. Uma regressão ajustada na amostra estima, portanto, a função $\mathbb{E}[Y \mid X]$ da população, e a pós-estratificação só precisa reponderar essa função pela distribuição populacional de $X$.
+
+A segunda é que o modelo interpola entre dois extremos. Se o modelo tivesse um parâmetro livre por célula, sem _pooling_, as predições seriam as médias das células, e o MrP coincidiria com a pós-estratificação por células, $\hat{\theta}_{PS} = \sum_c (N_c/N)\, \bar{y}_c$, desde que todas as células tivessem respondentes. Se o modelo tivesse só o intercepto, a predição seria a mesma em todas as células, e o MrP devolveria a média bruta. Um modelo com efeitos principais e _partial pooling_ fica entre esses extremos: aceita um pouco de viés, por impor que os efeitos se somem na escala logit, em troca de estimativas estáveis para todas as células.
+
+O estimador depende de duas condições. A primeira é a ignorabilidade dado $X$, a mesma da ponderação: se a seleção depende de algo fora do _frame_ e associado ao desfecho, nenhum modelo corrige. A segunda é que o modelo aproxime bem $\mathbb{E}[Y \mid X]$ nas células que pesam na população, inclusive nas que têm poucos ou nenhum respondente. É aqui que a especificação importa.
+
+### MrP como ponderação implícita
+
+Estimativas MrP podem ser lidas como médias ponderadas dos respondentes [@gelman2007struggles; @si2020weighting]. No caso de um modelo linear ajustado por mínimos quadrados, a conta é exata e simples. Com matriz de desenho $\mathbf{X}$ (uma linha por respondente) e $\bar{\mathbf{x}}_U$ o vetor de médias populacionais das colunas de $\mathbf{X}$, calculado com o _frame_,
+
+$$
+\hat{\theta}^{\text{MRP}} = \bar{\mathbf{x}}_U^\top \hat{\boldsymbol{\beta}} = \bar{\mathbf{x}}_U^\top (\mathbf{X}^\top\mathbf{X})^{-1}\mathbf{X}^\top \mathbf{y} = \sum_i w_i\, y_i,
+\qquad
+w_i = \bar{\mathbf{x}}_U^\top (\mathbf{X}^\top\mathbf{X})^{-1}\mathbf{x}_i .
+$$
+
+Os pesos somam 1 quando o modelo tem intercepto, fazem a amostra reproduzir as médias populacionais de todas as colunas de $\mathbf{X}$ e podem ser negativos. Eles dependem só de $X$, não de $y$.
+
+::: prova
+Os pesos formam o vetor $\mathbf{w} = \mathbf{X}(\mathbf{X}^\top\mathbf{X})^{-1}\bar{\mathbf{x}}_U$. Então $\mathbf{X}^\top\mathbf{w} = \mathbf{X}^\top\mathbf{X}(\mathbf{X}^\top\mathbf{X})^{-1}\bar{\mathbf{x}}_U = \bar{\mathbf{x}}_U$: a média ponderada de cada coluna de $\mathbf{X}$ é a média populacional. Como a primeira coluna de $\mathbf{X}$ é o intercepto (um vetor de uns) e a primeira entrada de $\bar{\mathbf{x}}_U$ é 1, segue que $\sum_i w_i = 1$.
+:::
+
+Em modelos lineares multiníveis, a forma de média ponderada continua exata, dados os componentes de variância, mas a calibração deixa de ser exata nas colunas com _pooling_; em modelos logísticos, a relação é aproximada. A leitura é a mesma: o MrP é uma forma de ponderação em que o modelo decide como a informação de cada respondente é distribuída pelas células.
+
+### Preditores de nível de grupo
+
+Na @eq-modelo5, os interceptos das UFs com poucos respondentes são encolhidos em direção a zero, isto é, à predição feita só com as variáveis demográficas. Se houver informação sobre as UFs, como indicadores socioeconômicos ou resultados eleitorais anteriores, ela pode definir a média para a qual cada UF é encolhida:
+
+$$
+\alpha^{(\text{UF})}_j \sim \mathcal{N}(\mathbf{z}_j^\top \boldsymbol{\gamma}, \tau^2).
+$$
+
+Uma UF com poucos respondentes passa a ser estimada principalmente pelo que $\mathbf{z}_j$ prevê. @park2004bayesian incluem preditores estaduais no modelo, e @lax2009estimate mostram que o MrP com esses preditores supera a desagregação de várias pesquisas nacionais; @buttice2013multilevel mostram que o desempenho do MrP varia bastante entre aplicações e depende sobretudo da força desses preditores.
+
+### Estimativas para subgrupos
+
+Para um subgrupo $s$ definido por variáveis do _frame_ (uma união de células), basta restringir a soma da @def-mrp às células que pertencem a ele:
+
+$$
+\hat{\theta}^{\text{MRP}}_s = \frac{\sum_{c \in s} N_c\, \hat{\pi}_c}{\sum_{c \in s} N_c}.
+$$
+
+Por construção, a média das estimativas de uma partição (por exemplo, os três níveis de escolaridade), ponderada pelos tamanhos populacionais, reproduz a estimativa nacional.
+
+A estimativa de cada subgrupo corrige a composição interna dele. As pessoas com ensino superior da amostra, por exemplo, podem ser mais jovens ou mais brancas do que as pessoas com ensino superior na população, e a pós-estratificação dentro do subgrupo acerta isso. Mas as estimativas de subgrupos herdam a estrutura do modelo. Com efeitos principais, a diferença entre dois grupos de escolaridade é a mesma, na escala logit, em todas as UFs, idades e grupos de cor/raça. Se na população o efeito da escolaridade for diferente entre pessoas brancas e pretas, um modelo sem essa interação erra as estimativas desses subgrupos. @ghitza2013deep propõem incluir interações como efeitos aleatórios, $\alpha^{(\text{escol} \times \text{raça})}_{mn} \sim \mathcal{N}(0, \tau^2_{\text{escol} \times \text{raça}})$, que o _partial pooling_ encolhe em direção a zero quando os dados não sustentam a diferença.
+
+## Em R
+
+### MrP numa amostra
+
+Usamos a mesma amostra _opt-in_ do [capítulo 1](01-amostras-nao-probabilisticas.qmd) e ajustamos o modelo da @eq-modelo5 com `lme4`. As predições são feitas para as `r inteiro(nrow(frame))` células da população sintética.
+
+```{r}
+#| label: c3-mrp
+set.seed(42)
+amostra <- amostrar_optin(pop, n = 2000)
+
+m5 <- glmer(y ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado),
+            data = amostra, family = binomial,
+            control = glmerControl(optimizer = "bobyqa"))
+
+frame$pi_hat <- predict(m5, newdata = frame, type = "response",
+                        allow.new.levels = TRUE)
+
+mrp_amostra <- sum(frame$pi_hat * frame$N) / sum(frame$N)
+c(verdade = mundo$verdade, bruta = mean(amostra$y), mrp = mrp_amostra)
+```
+
+Nesta amostra, o MrP fica a `r num(100 * (mrp_amostra - mundo$verdade))` pp da verdade, contra `r num(100 * (mean(amostra$y) - mundo$verdade))` pp da média bruta. Uma amostra só pode cair longe da verdade por acaso; a comparação sistemática entre métodos vem do Monte Carlo, mais adiante.
+
+### Os pesos implícitos
+
+Com um modelo linear com os mesmos preditores (e a UF como efeito fixo), os pesos implícitos podem ser calculados diretamente e comparados com os do _raking_ do [capítulo 1](01-amostras-nao-probabilisticas.qmd).
+
+```{r}
+#| label: c3-pesos
+ufs   <- sort(unique(pop$estado))
+f_lin <- y ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + estado
+X     <- model.matrix(f_lin, mutate(amostra, estado = factor(estado, ufs)))
+X_pop <- model.matrix(f_lin, mutate(frame, y = 0, estado = factor(estado, ufs)))
+x_pop <- colSums(X_pop * frame$N) / sum(frame$N)
+w_mrp <- drop(X %*% solve(crossprod(X), x_pop))
+
+desenho <- svydesign(ids = ~1, data = amostra)
+margens <- map(VARS_FRAME, \(v) count(pop, across(all_of(v)), name = "Freq"))
+rk      <- rake(desenho, map(VARS_FRAME, reformulate), margens,
+                control = list(maxit = 50))
+w_rake  <- weights(rk) / sum(weights(rk))
+
+c(soma_pesos      = sum(w_mrp),
+  mrp_linear      = sum(w_mrp * amostra$y),
+  lm_predito      = sum(predict(lm(f_lin, amostra), mutate(frame, y = 0)) * frame$N) /
+                      sum(frame$N),
+  pesos_negativos = sum(w_mrp < 0),
+  correlacao_rake = cor(w_mrp, w_rake))
+```
+
+Os pesos somam 1, e a média ponderada coincide com a predição pós-estratificada do modelo linear. Há `r sum(w_mrp < 0)` pesos negativos, o que o _raking_, cujos pesos são sempre positivos, nunca produz. A correlação de `r num(cor(w_mrp, w_rake), 2)` com os pesos do _raking_ mostra que os dois métodos distribuem a informação dos respondentes de forma parecida. Os dois fazem a amostra reproduzir exatamente as margens do _frame_; a diferença está na forma dos pesos, multiplicativa e sempre positiva no _raking_, linear e sem restrição de sinal no modelo linear (que equivale a uma calibração linear).
+
+### Subgrupos
+
+A @tbl-c3-subgrupos compara as estimativas por escolaridade e cor/raça na mesma amostra. Numa amostra só, os erros por subgrupo variam bastante, e nenhum método acerta todos os grupos.
+
+```{r}
+#| label: tbl-c3-subgrupos
+#| tbl-cap: "Estimativas por subgrupo numa amostra opt-in: média bruta, raking e MrP, comparadas ao valor verdadeiro."
+subgrupos <- function(var) {
+  verdade <- pop |> group_by(grupo = .data[[var]]) |> summarise(verdade = mean(y))
+  bruta   <- amostra |> group_by(grupo = .data[[var]]) |> summarise(bruta = mean(y))
+  raking  <- svyby(reformulate("y"), reformulate(var), rk, svymean) |>
+    as_tibble() |> transmute(grupo = .data[[var]], raking = y)
+  mrp     <- frame |> group_by(grupo = .data[[var]]) |>
+    summarise(mrp = sum(pi_hat * N) / sum(N))
+  reduce(list(verdade, bruta, raking, mrp), left_join, by = "grupo") |>
+    mutate(variavel = c(escolaridade_3cat = "Escolaridade", cor_raca = "Cor/raça")[var],
+           grupo = as.character(grupo))
+}
+
+map_dfr(c("escolaridade_3cat", "cor_raca"), subgrupos) |>
+  gt(groupname_col = "variavel") |>
+  fmt_percent(c(verdade, bruta, raking, mrp), decimals = 1, dec_mark = ",") |>
+  cols_label(grupo = "", verdade = "Verdade", bruta = "Bruta",
+             raking = "Raking", mrp = "MrP")
+```
+
+### Muitas amostras
+
+O Monte Carlo compara, em 200 amostras _opt-in_, a média bruta, o _raking_ e duas versões do MrP. A versão com efeitos fixos é o modelo da @eq-modelo5. A versão com efeitos aleatórios usa um intercepto aleatório para cada variável, $\text{logit}(\pi_i) = \beta_0 + \alpha^{(\text{UF})}_{j[i]} + \alpha^{(\text{sexo})}_{k[i]} + \alpha^{(\text{idade})}_{l[i]} + \alpha^{(\text{escol})}_{m[i]} + \alpha^{(\text{raça})}_{r[i]}$, como discutido no [capítulo 2](02-modelos-multinivel.qmd). Os estimandos são a proporção nacional e as proporções em cada categoria de sexo, faixa etária, escolaridade e cor/raça.
+
+```{r}
+#| label: c3-monte-carlo
+dims <- c("sexo", "faixa_etaria", "escolaridade_3cat", "cor_raca")
+
+verdades <- bind_rows(
+  tibble(dimensao = "Nacional", grupo = "Total", verdade = mean(pop$y)),
+  map_dfr(dims, \(v) pop |> group_by(grupo = as.character(.data[[v]])) |>
+            summarise(verdade = mean(y)) |> mutate(dimensao = v))
+)
+
+agregar <- function(frame, pi) {
+  frame$pi <- pi
+  bind_rows(
+    tibble(dimensao = "Nacional", grupo = "Total",
+           est = sum(frame$pi * frame$N) / sum(frame$N)),
+    map_dfr(dims, \(v) frame |> group_by(grupo = as.character(.data[[v]])) |>
+              summarise(est = sum(pi * N) / sum(N)) |> mutate(dimensao = v))
+  )
+}
+
+estimar_c3 <- function(r) {
+  a <- amostrar_optin(pop)
+  controle <- glmerControl(optimizer = "bobyqa")
+  m5 <- suppressMessages(glmer(
+    y ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado),
+    data = a, family = binomial, control = controle))
+  m1 <- suppressMessages(glmer(
+    y ~ 1 + (1 | estado) + (1 | sexo) + (1 | faixa_etaria) +
+      (1 | escolaridade_3cat) + (1 | cor_raca),
+    data = a, family = binomial, control = controle))
+  bruta <- bind_rows(
+    tibble(dimensao = "Nacional", grupo = "Total", est = mean(a$y)),
+    map_dfr(dims, \(v) a |> group_by(grupo = as.character(.data[[v]])) |>
+              summarise(est = mean(y)) |> mutate(dimensao = v)))
+  rk <- tryCatch(
+    rake(svydesign(ids = ~1, data = a), map(VARS_FRAME, reformulate), margens,
+         control = list(maxit = 50)),
+    error = function(e) NULL)
+  raking <- if (is.null(rk)) NULL else bind_rows(
+    tibble(dimensao = "Nacional", grupo = "Total",
+           est = coef(svymean(~y, rk))[[1]]),
+    map_dfr(dims, \(v) svyby(~y, reformulate(v), rk, svymean) |> as_tibble() |>
+              transmute(grupo = as.character(.data[[v]]), est = y, dimensao = v)))
+  bind_rows(
+    "Média bruta"    = bruta,
+    "Raking"         = raking,
+    "MrP (efeitos fixos)"     = agregar(frame, predict(m5, frame, type = "response",
+                                                       allow.new.levels = TRUE)),
+    "MrP (efeitos aleatórios)" = agregar(frame, predict(m1, frame, type = "response",
+                                                        allow.new.levels = TRUE)),
+    .id = "metodo")
+}
+
+mc3 <- com_cache("c3_monte_carlo",
+                 list(mundo$chave, 200, deparse(estimar_c3), deparse(agregar)),
+                 monte_carlo(200, estimar_c3))
+
+res_c3 <- mc3 |>
+  left_join(verdades, by = c("dimensao", "grupo")) |>
+  group_by(metodo, dimensao, grupo) |>
+  summarise(vies = 100 * mean(est - verdade), dp = 100 * sd(est),
+            reqm = 100 * sqrt(mean((est - verdade)^2)), .groups = "drop")
+```
+
+```{r}
+#| label: tbl-c3-mc
+#| tbl-cap: "Desempenho em 200 amostras _opt-in_. Para cada dimensão, a tabela mostra a média, entre as categorias, do viés absoluto e da REQM (pontos percentuais)."
+ordem_metodos <- c("Média bruta", "Raking", "MrP (efeitos aleatórios)", "MrP (efeitos fixos)")
+nomes_dim <- c(Nacional = "Nacional", sexo = "Sexo", faixa_etaria = "Faixa etária",
+               escolaridade_3cat = "Escolaridade", cor_raca = "Cor/raça")
+
+res_c3 |>
+  group_by(metodo, dimensao) |>
+  summarise(vies = mean(abs(vies)), reqm = mean(reqm), .groups = "drop") |>
+  mutate(dimensao = factor(nomes_dim[dimensao], levels = nomes_dim),
+         metodo = factor(metodo, levels = ordem_metodos)) |>
+  arrange(dimensao, metodo) |>
+  gt(groupname_col = "dimensao", rowname_col = "metodo") |>
+  fmt_number(c(vies, reqm), decimals = 2, dec_mark = ",") |>
+  cols_label(vies = "Viés absoluto", reqm = "REQM")
+```
+
+```{r}
+#| label: fig-c3-mc
+#| fig-cap: "Viés por subgrupo em 200 amostras _opt-in_ (pontos percentuais). Cada linha é uma categoria de sexo, faixa etária, escolaridade ou cor/raça, ou a estimativa nacional."
+#| fig-width: 7
+#| fig-height: 5
+nome_grupo <- function(g) recode(g, "16_24" = "16 a 24", "25_34" = "25 a 34", "35_44" = "35 a 44",
+                                 "45_54" = "45 a 54", "55_64" = "55 a 64", "65_+" = "65 ou mais")
+rotulos <- c("Nacional",
+             unlist(map(dims, \(v) paste0(nomes_dim[v], ": ", nome_grupo(NIVEIS[[v]])))))
+
+res_c3 |>
+  mutate(rotulo = if_else(dimensao == "Nacional", "Nacional",
+                          paste0(nomes_dim[dimensao], ": ", nome_grupo(grupo))),
+         rotulo = factor(rotulo, levels = rev(rotulos)),
+         metodo = factor(metodo, levels = ordem_metodos)) |>
+  ggplot(aes(x = vies, y = rotulo, shape = metodo, colour = metodo)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = cn_palette$ink3) +
+  geom_point(size = 2) +
+  scale_shape_manual(values = c(4, 1, 2, 16)) +
+  scale_colour_notes() +
+  scale_x_continuous(labels = rotulo_num) +
+  labs(x = "Viés (pontos percentuais)", y = NULL, shape = NULL, colour = NULL)
+```
+
+```{r}
+#| label: c3-valores
+#| include: false
+v3 <- function(m, g, col) res_c3[[col]][res_c3$metodo == m & res_c3$grupo == g]
+vd <- function(m, d, col = "vies") mean(abs(res_c3[[col]][res_c3$metodo == m & res_c3$dimensao == d]))
+falhas_rk <- 200 - sum(mc3$metodo == "Raking" & mc3$dimensao == "Nacional")
+ep_mc <- v3("MrP (efeitos fixos)", "Total", "dp") / sqrt(200)
+fx <- "MrP (efeitos fixos)"; al <- "MrP (efeitos aleatórios)"
+```
+
+Na estimativa nacional, a média bruta erra em média `r num(v3("Média bruta", "Total", "vies"))` pp. O _raking_ e o MrP com efeitos fixos removem quase todo o viés (`r num(v3("Raking", "Total", "vies"), 2)` e `r num(v3(fx, "Total", "vies"), 2)` pp) e têm REQM parecida (`r num(v3("Raking", "Total", "reqm"), 2)` e `r num(v3(fx, "Total", "reqm"), 2)` pp). Com 200 réplicas, o erro de Monte Carlo de cada viés é de cerca de `r num(ep_mc, 1)` pp, e diferenças dessa ordem entre métodos não devem ser lidas como uma ordenação.
+
+A diferença entre os métodos aparece nos subgrupos. O _raking_ acerta a margem de cada variável, mas não a composição dentro de cada categoria. Como a seleção simulada distorce a combinação de escolaridade e idade, as pessoas de cada faixa etária na amostra ponderada continuam com uma escolaridade diferente da de sua faixa na população. Como a escolaridade afeta o desfecho, as estimativas por faixa etária do _raking_ ficam com viés absoluto médio de `r num(vd("Raking", "faixa_etaria"))` pp. O mesmo mecanismo, no sentido inverso, afeta as estimativas por escolaridade (`r num(vd("Raking", "escolaridade_3cat"), 2)` pp, contra `r num(vd("Média bruta", "escolaridade_3cat"), 2)` pp da média bruta). O MrP com efeitos fixos condiciona em todas as variáveis ao mesmo tempo e não tem esse problema (`r num(vd(fx, "faixa_etaria"), 2)` pp nas faixas etárias).
+
+O MrP com efeitos aleatórios tem viés maior nos subgrupos: `r num(vd(al, "cor_raca"), 2)` pp em cor/raça, `r num(vd(al, "faixa_etaria"), 2)` pp nas faixas etárias e `r num(vd(al, "escolaridade_3cat"), 2)` pp na escolaridade, contra `r num(vd(fx, "cor_raca"), 2)`, `r num(vd(fx, "faixa_etaria"), 2)` e `r num(vd(fx, "escolaridade_3cat"), 2)` pp com efeitos fixos. O mecanismo é o do [capítulo 2](02-modelos-multinivel.qmd): com poucas categorias, a variância de cada efeito é mal estimada, e o _partial pooling_ puxa as categorias pequenas e extremas (65 anos ou mais, ensino fundamental, pessoas pretas) em direção à média. Em troca, a variância cai: em cor/raça, a REQM média é de `r num(vd(al, "cor_raca", "reqm"), 2)` pp com efeitos aleatórios e `r num(vd(fx, "cor_raca", "reqm"), 2)` pp com efeitos fixos, o mesmo _trade-off_ entre viés e variância do capítulo anterior.
+
+O grupo "Outras" (amarelos e indígenas, cerca de 1% da população) tem REQM alta em todos os métodos, por variância: cada amostra tem poucas dezenas de respondentes nele. Em `r falhas_rk` das 200 amostras o _raking_ falhou por falta de respondentes em alguma UF.
+
+Como o mundo sintético foi gerado por um modelo de efeitos principais e a seleção depende só das variáveis do _frame_, esta é a situação favorável ao MrP; o [capítulo 5](05-especificacao-validacao.qmd) examina o que acontece quando o modelo omite interações presentes na população. Este capítulo também não trata da incerteza: o `lme4` fornece estimativas pontuais, e intervalos para o estimador da @def-mrp exigem propagar a incerteza de todos os parâmetros, o que é o tema do [capítulo 4](04-mrp-bayesiano.qmd).
+
+## Explorar os resultados
+
+O painel abaixo mostra os resultados do Monte Carlo por subgrupo. Escolha a dimensão e a métrica para comparar os quatro métodos.
+
+```{r}
+#| label: c3-ojs-dados
+#| include: false
+ojs_define(res_c3 = res_c3 |>
+             mutate(dimensao = nomes_dim[dimensao], grupo = nome_grupo(grupo)) |>
+             select(metodo, dimensao, grupo, vies, reqm))
+```
+
+::: {.panel-tabset}
+
+### Interativo
+
+```{ojs}
+//| echo: false
+import {scheme, palette, plotStyle, fmt} from "/_extensions/felipelmc/course-notes/ojs/notes.js"
+mode = scheme()
+pal = palette(mode)
+```
+
+::: cn-sim
+
+```{ojs}
+//| echo: false
+resultados = transpose(res_c3)
+viewof dimensao = Inputs.select(["Nacional", "Sexo", "Faixa etária", "Escolaridade", "Cor/raça"],
+                                {value: "Faixa etária", label: "Dimensão"})
+viewof metrica = Inputs.radio(new Map([["Viés", "vies"], ["REQM", "reqm"]]),
+                              {value: "vies", label: "Métrica"})
+```
+
+```{ojs}
+//| echo: false
+metodos = ["Média bruta", "Raking", "MrP (efeitos aleatórios)", "MrP (efeitos fixos)"]
+Plot.plot({
+  width, height: 340, style: plotStyle, marginLeft: 150,
+  x: {label: (metrica === "vies" ? "Viés" : "REQM") + " (pontos percentuais) →",
+      tickFormat: (d) => fmt(d, 1)},
+  y: {domain: metodos, axis: null},
+  fy: {label: null, axis: "left"},
+  color: {domain: metodos, range: [pal.ink3, pal.lineStrong, pal.ramp[1], pal.accent], legend: true},
+  symbol: {domain: metodos, range: ["times", "circle", "triangle", "square"]},
+  marks: [
+    Plot.ruleX([0], {stroke: pal.ink3, strokeDasharray: "4,3"}),
+    Plot.dot(resultados.filter((d) => d.dimensao === dimensao),
+             {x: metrica, y: "metodo", fy: "grupo", stroke: "metodo", symbol: "metodo",
+              r: 4.5, strokeWidth: 1.6})
+  ]
+})
+```
+
+:::
+
+### Em R
+
+```{r}
+#| eval: false
+dimensao_escolhida <- "faixa_etaria"
+res_c3 |>
+  filter(dimensao == dimensao_escolhida) |>
+  ggplot(aes(x = vies, y = grupo, shape = metodo, colour = metodo)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_point(size = 2.5, position = position_dodge(width = 0.5)) +
+  labs(x = "Viés (pontos percentuais)", y = NULL, shape = NULL, colour = NULL)
+```
+
+:::
+
+## Armadilhas
+
+- Extrapolação: nas células sem respondentes, a estimativa vem inteiramente do modelo. Se uma fração grande da população está nessas células (no [capítulo 1](01-amostras-nao-probabilisticas.qmd), cerca de um terço), a qualidade do MrP depende de o modelo extrapolar bem.
+- Estrutura aditiva: um modelo de efeitos principais impõe que as diferenças entre grupos sejam as mesmas em todas as combinações das outras variáveis. Estimativas para subgrupos pequenos ou cruzados são as mais sensíveis a isso.
+- O _frame_ é parte do modelo. Erros no _frame_, como tamanhos populacionais desatualizados ou variáveis classificadas de outra forma que no _survey_, entram diretamente no estimador da @def-mrp.
+- Seleção fora do _frame_: o MrP corrige apenas a composição nas variáveis incluídas. Uma variável associada ao desfecho e à participação, mas ausente do _frame_ (a religião, em muitos _surveys_ brasileiros), deixa um viés que nenhuma especificação do modelo remove.
+
+## Leituras
+
+@gelman1997poststratification e @park2004bayesian introduzem o MrP. @lax2009estimate comparam o MrP com a desagregação de várias pesquisas nacionais e mostram sua vantagem com amostras modestas. @buttice2013multilevel avaliam o desempenho em pesquisas nacionais convencionais e chamam atenção para a variação entre aplicações. @ghitza2013deep estendem o método para subgrupos pequenos com interações. @wang2015forecasting aplicam o MrP a uma amostra fortemente não representativa (usuários de um console de videogame) e recuperam o resultado eleitoral, um exemplo próximo da situação de painéis _online_. @hanretty2020introduction é uma introdução aplicada, e @lopezmartin2022multilevel reúnem estudos de caso com código em R.

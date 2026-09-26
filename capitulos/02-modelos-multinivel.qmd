@@ -1,0 +1,375 @@
+---
+title: "Modelos multinível e partial pooling"
+description: "Estimar médias de grupos com poucos dados: no pooling, complete pooling e partial pooling, Bayes empírico e Bayes completo."
+eyebrow: "Capítulo 02"
+---
+
+{{< include _aviso-ia.qmd >}}
+
+```{r}
+#| label: c2-setup
+#| include: false
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+source(here::here("R/mundo.R"))
+source(here::here("R/utils.R"))
+suppressMessages({
+  library(tidyverse)
+  library(lme4)
+  library(brms)
+  library(ggdist)
+})
+theme_set(theme_notes())
+mundo <- carregar_mundo()
+pop   <- mundo$pop
+dir.create(here::here("modelos"), showWarnings = FALSE)
+```
+
+## Intuição
+
+Suponha que queremos estimar a atitude média em cada UF a partir de uma amostra nacional de 2 mil pessoas. São Paulo terá algumas centenas de respondentes; Roraima, meia dúzia. Há três maneiras de proceder.
+
+A primeira é usar a média de cada UF isoladamente (_no pooling_). Para São Paulo, isso funciona. Para Roraima, a média de seis pessoas oscila muito de uma amostra para outra, e numa UF sem respondentes nem existe. A segunda é ignorar as UFs e atribuir a todas a média nacional (_complete pooling_): a estimativa é estável, mas apaga qualquer diferença real entre UFs. A terceira é um meio-termo (_partial pooling_): a estimativa de cada UF é uma média ponderada entre a média da própria UF e a média entre as UFs, e o peso da média local cresce com o número de respondentes da UF e com o quanto as UFs de fato diferem entre si.
+
+O modelo multinível formaliza esse meio-termo e estima os pesos a partir dos dados. Ele é o "M" do MrP: é o que permite estimar a atitude em células com poucos respondentes ou nenhum, emprestando informação das outras células.
+
+## Formalização
+
+### Três estimadores para médias de grupos
+
+Seja $y_{ij}$ o desfecho da pessoa $i$ no grupo $j$ (aqui, a UF), com $n_j$ respondentes e média $\bar{y}_j$. Considere o modelo
+
+$$
+y_{ij} = \alpha_j + \varepsilon_{ij}, \qquad \varepsilon_{ij} \sim \mathcal{N}(0, \sigma^2),
+$$
+
+de modo que $\bar{y}_j \mid \alpha_j \sim \mathcal{N}(\alpha_j, \sigma^2 / n_j)$. Sem mais hipóteses, o estimador natural de $\alpha_j$ é $\bar{y}_j$ (_no pooling_). No outro extremo, supor $\alpha_j = \mu$ para todo $j$ leva a $\hat{\alpha}_j = \bar{y}$, a média de todos os respondentes (_complete pooling_). O modelo multinível acrescenta uma distribuição para os próprios $\alpha_j$,
+
+$$
+\alpha_j \sim \mathcal{N}(\mu, \tau^2),
+$$
+
+onde $\mu$ é a média dos efeitos dos grupos (que não é a média de todos os respondentes, $\bar{y}$, porque grupos grandes e pequenos contam de forma diferente) e $\tau$ mede o quanto os grupos diferem.
+
+::: {#thm-shrinkage}
+## Encolhimento
+No modelo acima, com $\mu$, $\tau$ e $\sigma$ conhecidos, a distribuição _a posteriori_ de $\alpha_j$ é normal, com média
+$$
+\boxed{\hat{\alpha}_j = \mathbb{E}(\alpha_j \mid \bar{y}_j) = \lambda_j\, \bar{y}_j + (1 - \lambda_j)\, \mu,
+\qquad
+\lambda_j = \frac{\tau^2}{\tau^2 + \sigma^2 / n_j} = \frac{n_j}{n_j + \sigma^2 / \tau^2}}
+$$
+e $\mathbb{V}(\alpha_j \mid \bar{y}_j) = \left(n_j/\sigma^2 + 1/\tau^2\right)^{-1}$.
+:::
+
+::: prova
+Tratando $\alpha_j \sim \mathcal{N}(\mu, \tau^2)$ como _prior_ e $\bar{y}_j \mid \alpha_j \sim \mathcal{N}(\alpha_j, \sigma^2/n_j)$ como verossimilhança, a distribuição _a posteriori_ é proporcional a
+$$
+\exp\!\left\{-\frac{n_j(\bar{y}_j - \alpha_j)^2}{2\sigma^2} - \frac{(\alpha_j - \mu)^2}{2\tau^2}\right\}.
+$$
+O expoente é quadrático em $\alpha_j$, com coeficiente de $\alpha_j^2$ igual a $-\tfrac{1}{2}(n_j/\sigma^2 + 1/\tau^2)$, então a distribuição _a posteriori_ é normal com precisão $n_j/\sigma^2 + 1/\tau^2$. Completando o quadrado, a média é a média das duas fontes ponderada pelas precisões,
+$$
+\hat{\alpha}_j = \frac{\frac{n_j}{\sigma^2}\,\bar{y}_j + \frac{1}{\tau^2}\,\mu}{\frac{n_j}{\sigma^2} + \frac{1}{\tau^2}},
+$$
+O peso de $\bar{y}_j$ é $\lambda_j = (n_j/\sigma^2) / (n_j/\sigma^2 + 1/\tau^2)$. Multiplicando numerador e denominador por $\sigma^2\tau^2/n_j$, obtém-se a primeira forma de $\lambda_j$; multiplicando por $\sigma^2$, a segunda.
+:::
+
+O fator $\lambda_j \in [0, 1)$ é a confiabilidade da média do grupo. A segunda forma de $\lambda_j$ dá uma leitura útil: a razão $\sigma^2 / \tau^2$ funciona como um número de observações equivalente ao _prior_. Um grupo com $n_j = \sigma^2 / \tau^2$ respondentes recebe $\lambda_j = 1/2$, a meio caminho entre a média local e $\mu$. Os casos-limite recuperam os outros dois estimadores: quando $\tau \to \infty$, $\lambda_j \to 1$ (_no pooling_); quando $\tau \to 0$, $\lambda_j \to 0$ (_complete pooling_). Um grupo sem respondentes ($n_j = 0$) recebe $\hat{\alpha}_j = \mu$.
+
+### Por que encolher melhora as estimativas
+
+Encolher as médias em direção à média geral introduz viés em cada grupo: um grupo com efeito verdadeiro alto é puxado para baixo. Em troca, reduz a variância, e, em média sobre os grupos, a redução de variância supera o quadrado do viés introduzido, sobretudo nos grupos pequenos. Um grupo pequeno cujo efeito verdadeiro está longe de $\mu$ pode, ainda assim, sair pior. @efron1977stein apresentam o resultado de Stein: quando as variâncias amostrais são conhecidas e iguais, o estimador de James-Stein tem erro quadrático esperado total menor do que as médias separadas, sejam quais forem os valores verdadeiros. Isso vale a partir de três grupos quando se encolhe em direção a um ponto fixado a priori, e a partir de quatro quando se encolhe em direção à média estimada dos grupos. O modelo multinível segue a mesma lógica e escolhe o quanto encolher a partir da variação observada entre grupos.
+
+### Estimando $\mu$, $\tau$ e $\sigma$
+
+O parâmetro $\sigma$ é estimado pela variação dentro dos grupos. Dado $\sigma$, $\mu$ e $\tau$ são estimados pela distribuição marginal das médias, $\bar{y}_j \sim \mathcal{N}(\mu, \tau^2 + \sigma^2 / n_j)$: se as médias dos grupos variam mais do que o ruído amostral explicaria, $\tau$ é grande. Há duas estratégias.
+
+A primeira é estimar $\mu$, $\tau$ e $\sigma$ por máxima verossimilhança (ou máxima verossimilhança restrita) e substituí-los no @thm-shrinkage. É o que faz o `lme4` [@bates2015fitting], e o procedimento é chamado de Bayes empírico. A incerteza sobre $\tau$ é ignorada. Quando a variação real entre grupos é pequena perto do ruído, a estimativa de $\tau$ frequentemente cai na fronteira $\hat{\tau} = 0$ (o aviso de _singular fit_ do `lme4`), e o modelo passa a fazer _complete pooling_ com intervalos estreitos demais.
+
+A segunda é a abordagem bayesiana completa: atribui-se um _prior_ a $\tau$ (por exemplo, uma meia-normal) e integra-se sobre a incerteza de $\tau$ ao calcular as distribuições dos $\alpha_j$. Com poucos grupos ou pouca informação, essa diferença importa; com muitos grupos, $\tau$ fica bem determinado e as duas abordagens convergem. O [capítulo 4](04-mrp-bayesiano.qmd) volta a esse ponto.
+
+### Desfechos binários
+
+Para um desfecho binário, o modelo é escrito na escala logit:
+
+$$
+y_{ij} \sim \text{Bernoulli}(\pi_{ij}), \qquad \text{logit}(\pi_{ij}) = \mu + \alpha_j, \qquad \alpha_j \sim \mathcal{N}(0, \tau^2).
+$$
+
+Não há fórmula fechada como a do @thm-shrinkage, mas a lógica é a mesma. Pelo método delta, a variância amostral do logit da proporção de um grupo é aproximadamente $1 / [n_j\, p(1 - p)]$, onde $p$ é a proporção típica, e o número de observações equivalente ao _prior_ fica em torno de
+
+$$
+\frac{\sigma^2_{\text{logit}}}{\tau^2} \approx \frac{1}{p(1-p)\,\tau^2}.
+$$
+
+### Várias variáveis de agrupamento
+
+O MrP usa várias variáveis ao mesmo tempo. Na versão com todos os efeitos aleatórios,
+
+$$
+\text{logit}(\pi_i) = \beta_0 + \alpha^{(\text{UF})}_{j[i]} + \alpha^{(\text{sexo})}_{k[i]} + \alpha^{(\text{idade})}_{l[i]} + \alpha^{(\text{escol})}_{m[i]} + \alpha^{(\text{raça})}_{r[i]},
+\qquad \alpha^{(\cdot)}_g \sim \mathcal{N}(0, \tau^2_{(\cdot)}),
+$$
+
+cada variável tem seu próprio $\tau$. O _pooling_ é útil quando há muitas categorias e poucos dados por categoria, como nas 27 UFs. Para variáveis com poucas categorias (de duas a seis), cada uma com centenas de respondentes, há pouco a ganhar: as médias já são precisas, e o $\tau$ estimado a partir de tão poucas categorias é muito incerto (com duas categorias, estima-se uma variância a partir de dois valores). O risco é o $\hat{\tau}$ dessas variáveis cair para perto de zero e o modelo apagar diferenças reais entre as categorias. A especificação adotada aqui combina, por isso, efeitos fixos para as variáveis demográficas com intercepto aleatório só para a UF, enquanto trabalhos clássicos como @park2004bayesian e @lax2009estimate usam efeitos aleatórios para todas. O [capítulo 3](03-estimador-mrp.qmd) compara as duas versões.
+
+## Em R
+
+### _No pooling_, _complete pooling_ e _partial pooling_
+
+Para isolar o efeito do _pooling_, este capítulo usa uma amostra aleatória simples de 2 mil pessoas; o viés de seleção volta no [capítulo 3](03-estimador-mrp.qmd). O estimando é a proporção da atitude em cada UF do mundo sintético.
+
+```{r}
+#| label: c2-estimadores
+set.seed(7)
+aas <- amostrar_aas(pop, n = 2000)
+
+verdade_uf <- pop |>
+  group_by(estado) |>
+  summarise(verdade = mean(y), .groups = "drop")
+
+m_uf <- glmer(y ~ 1 + (1 | estado), data = aas, family = binomial)
+
+estimativas_uf <- aas |>
+  group_by(estado) |>
+  summarise(n = n(), no_pooling = mean(y), .groups = "drop") |>
+  mutate(complete_pooling = mean(aas$y),
+         partial_pooling  = plogis(fixef(m_uf)[1] +
+                                     ranef(m_uf)$estado[estado, 1])) |>
+  left_join(verdade_uf, by = "estado")
+
+tau_hat <- as.data.frame(VarCorr(m_uf))$sdcor[1]
+p_bar   <- mean(aas$y)
+n_equiv <- 1 / (p_bar * (1 - p_bar) * tau_hat^2)
+
+# valor verdadeiro de tau neste modelo (so com intercepto): desvio-padrao dos
+# logits das proporcoes verdadeiras por UF
+tau_verdadeiro <- sd(qlogis(verdade_uf$verdade))
+c(tau_hat = tau_hat, tau_verdadeiro = tau_verdadeiro, n_equivalente = n_equiv)
+```
+
+O desvio-padrão estimado entre UFs na escala logit é $\hat{\tau} =$ `r num(tau_hat, 3)`. O valor verdadeiro, neste modelo só com intercepto, é o desvio-padrão dos logits das proporções verdadeiras por UF, `r num(tau_verdadeiro, 2)`; os efeitos de UF do mundo sintético, líquidos das demais variáveis, têm desvio-padrão `r num(mundo$par$sigma_estado, 2)`. Pela aproximação acima, uma UF precisa de cerca de `r inteiro(n_equiv)` respondentes para que sua própria média pese metade na estimativa. Nesta amostra, `r sum(estimativas_uf$n >= n_equiv)` UFs chegam a esse número, e as `r sum(estimativas_uf$n < n_equiv / 3)` UFs com menos de `r inteiro(n_equiv / 3)` respondentes dão menos de um quarto do peso à própria média ($\lambda_j < 0{,}25$).
+
+```{r}
+#| label: fig-c2-pooling
+#| fig-cap: "Estimativas por UF numa amostra aleatória simples de 2 mil pessoas. Círculos vazados: média da UF (_no pooling_); pontos cheios: modelo multinível (_partial pooling_); x: valor verdadeiro. A linha vertical é a média entre UFs estimada, para a qual as médias são encolhidas. As UFs estão ordenadas pelo número de respondentes, entre parênteses."
+#| fig-width: 7
+#| fig-height: 6
+lim_x <- range(c(estimativas_uf$no_pooling, estimativas_uf$verdade)) + c(-0.03, 0.03)
+
+estimativas_uf |>
+  mutate(estado = fct_reorder(paste0(estado, " (", n, ")"), n)) |>
+  ggplot(aes(y = estado)) +
+  geom_vline(xintercept = plogis(fixef(m_uf)[1]), colour = cn_palette$line_strong) +
+  geom_segment(aes(x = no_pooling, xend = partial_pooling), colour = cn_palette$line_strong) +
+  geom_point(aes(x = no_pooling), shape = 1, size = 2, colour = cn_palette$ink3) +
+  geom_point(aes(x = partial_pooling), size = 2, colour = cn_palette$accent) +
+  geom_point(aes(x = verdade), shape = 4, size = 2.5, colour = cn_palette$danger) +
+  scale_x_continuous(labels = rotulo_pct, limits = lim_x) +
+  labs(x = "Proporção estimada", y = NULL)
+```
+
+### A fórmula de encolhimento na prática
+
+Num modelo linear com um único efeito aleatório, as predições do `lme4` coincidem com o @thm-shrinkage aplicado às estimativas de $\mu$, $\tau$ e $\sigma$. Isso pode ser conferido ajustando um modelo linear de probabilidade:
+
+```{r}
+#| label: c2-formula
+m_lin  <- lmer(y ~ 1 + (1 | estado), data = aas)
+vc     <- as.data.frame(VarCorr(m_lin))
+tau2   <- vc$vcov[1]
+sigma2 <- vc$vcov[2]
+mu     <- fixef(m_lin)[[1]]
+
+manual <- aas |>
+  group_by(estado) |>
+  summarise(n = n(), ybar = mean(y), .groups = "drop") |>
+  mutate(lambda = tau2 / (tau2 + sigma2 / n),
+         manual = lambda * ybar + (1 - lambda) * mu,
+         lme4   = coef(m_lin)$estado[estado, 1])
+
+manual |> arrange(n) |> slice(c(1:3, (n() - 2):n()))
+max(abs(manual$manual - manual$lme4))
+```
+
+A diferença máxima entre o cálculo manual e o `lme4` é da ordem do erro numérico. A coluna `lambda` mostra a confiabilidade de cada UF: perto de zero para as menores, maior para São Paulo.
+
+### Qual estimador erra menos?
+
+Numa amostra só, o _partial pooling_ pode perder para as médias separadas numa ou noutra UF; a comparação justa é a média sobre muitas amostras. O Monte Carlo abaixo calcula, em cada uma de 300 amostras aleatórias simples, a raiz do erro quadrático médio sobre as 27 UFs de cada estimador. As UFs sem respondentes numa amostra recebem a média de todos os respondentes no _no pooling_.
+
+```{r}
+#| label: c2-monte-carlo
+estimar_c2 <- function(r) {
+  a <- amostrar_aas(pop, n = 2000)
+  m <- suppressMessages(glmer(y ~ 1 + (1 | estado), data = a, family = binomial))
+  medias <- a |> group_by(estado) |> summarise(ybar = mean(y), .groups = "drop")
+  verdade_uf |>
+    left_join(medias, by = "estado") |>
+    mutate(no_pooling       = coalesce(ybar, mean(a$y)),
+           complete_pooling = mean(a$y),
+           partial_pooling  = plogis(predict(m, newdata = tibble(estado = estado),
+                                             allow.new.levels = TRUE))) |>
+    summarise(across(c(no_pooling, complete_pooling, partial_pooling),
+                     ~ 100 * sqrt(mean((.x - verdade)^2)))) |>
+    mutate(tau_hat = as.data.frame(VarCorr(m))$sdcor[1])
+}
+
+mc2 <- com_cache("c2_monte_carlo", list(mundo$chave, 300, deparse(estimar_c2)),
+                 monte_carlo(300, estimar_c2))
+
+mc2 |>
+  summarise(across(c(no_pooling, complete_pooling, partial_pooling), mean),
+            tau_medio = mean(tau_hat))
+```
+
+```{r}
+#| label: c2-valores
+#| include: false
+res_c2   <- mc2 |> summarise(across(c(no_pooling, complete_pooling, partial_pooling), mean))
+tau_zero <- sum(mc2$tau_hat < 0.01)
+```
+
+Em média, o erro por UF é de `r num(res_c2$no_pooling)` pp com as médias separadas, `r num(res_c2$complete_pooling)` pp com a média nacional e `r num(res_c2$partial_pooling)` pp com o modelo multinível. A estimativa pontual de $\tau$ variou bastante entre amostras, de `r num(min(mc2$tau_hat), 2)` a `r num(max(mc2$tau_hat), 2)`, e ficou em média em `r num(mean(mc2$tau_hat), 2)`, abaixo do valor verdadeiro de `r num(tau_verdadeiro, 2)`: a máxima verossimilhança tende a subestimar desvios-padrão de efeitos aleatórios quando há poucos grupos. `r if (tau_zero > 0) paste0("Em ", tau_zero, " das 300 amostras ela ficou praticamente em zero (abaixo de 0,01), o que reduz o modelo a _complete pooling_ embora a variação verdadeira entre UFs não seja nula.") else "Neste mundo sintético a estimativa nunca caiu na fronteira; com diferenças menores entre UFs ou amostras menores, isso é comum."`
+
+### A versão bayesiana
+
+O mesmo modelo pode ser ajustado com `brms` [@burkner2017brms], que usa o Stan [@carpenter2017stan] para amostrar da distribuição _a posteriori_. O _prior_ de $\tau$ é uma meia-normal com desvio-padrão 1 na escala logit, que admite diferenças grandes entre UFs mas torna improváveis valores absurdos. O [capítulo 4](04-mrp-bayesiano.qmd) detalha a escolha de _priors_ e os diagnósticos.
+
+```{r}
+#| label: c2-brms
+m_uf_bayes <- brm(
+  y ~ 1 + (1 | estado), data = aas, family = bernoulli(),
+  prior = prior(normal(0, 1), class = sd),
+  chains = 4, cores = 4, iter = 2000, seed = 2023,
+  backend = "cmdstanr", refresh = 0, silent = 2,
+  file = here::here("modelos", "c2_uf"), file_refit = "on_change"
+)
+
+tau_draws <- as_draws_df(m_uf_bayes)$sd_estado__Intercept
+c(tau_lme4 = tau_hat, tau_mediana = median(tau_draws),
+  quantile(tau_draws, c(0.05, 0.95)))
+```
+
+```{r}
+#| label: fig-c2-tau
+#| fig-cap: "Distribuição _a posteriori_ de τ (desvio-padrão entre UFs, escala logit). A linha tracejada é a estimativa pontual do lme4; a linha cheia, o valor verdadeiro neste modelo."
+#| fig-width: 7
+#| fig-height: 2.8
+tibble(tau = tau_draws) |>
+  ggplot(aes(x = tau)) +
+  stat_halfeye(fill = cn_palette$ramp[1], .width = c(0.5, 0.9)) +
+  geom_vline(xintercept = tau_hat, linetype = "dashed", colour = cn_palette$ink3) +
+  geom_vline(xintercept = tau_verdadeiro, colour = cn_palette$danger) +
+  scale_x_continuous(labels = rotulo_num) +
+  labs(x = expression(tau), y = NULL) +
+  theme(axis.text.y = element_blank())
+```
+
+A distribuição _a posteriori_ mostra o que a estimativa pontual esconde: com 2 mil respondentes, os dados são compatíveis com uma faixa ampla de diferenças entre UFs (o intervalo de 90% vai de `r num(quantile(tau_draws, 0.05), 2)` a `r num(quantile(tau_draws, 0.95), 2)`). O modelo bayesiano leva essa incerteza para as estimativas de cada UF, enquanto o Bayes empírico a descarta.
+
+## Simulação
+
+A simulação abaixo usa o modelo normal do @thm-shrinkage com os valores verdadeiros de $\mu$, $\tau$ e $\sigma$, na escala de proporção. Por isso o desvio-padrão entre UFs vem em pontos percentuais: um $\tau$ de 0,30 na escala logit corresponde a cerca de 7 pp quando a proporção está perto de 60%. Cada UF recebe um número de respondentes proporcional à sua população. Mexa no desvio-padrão e no tamanho da amostra para ver quando o _partial pooling_ se aproxima das médias separadas e quando se aproxima de $\mu$. Com grupos muito pequenos, o modelo normal pode gerar médias fora do intervalo de 0 a 100%; o gráfico corta nesses limites.
+
+```{r}
+#| label: c2-ojs-dados
+#| include: false
+ojs_define(ufs_c2 = pop |> count(estado) |> mutate(share = n / sum(n)) |>
+             select(estado, share))
+```
+
+::: {.panel-tabset}
+
+### Interativo
+
+```{ojs}
+//| echo: false
+import {scheme, palette, plotStyle, rng, fmt} from "/_extensions/felipelmc/course-notes/ojs/notes.js"
+mode = scheme()
+pal = palette(mode)
+```
+
+::: cn-sim
+
+```{ojs}
+//| echo: false
+viewof tau_pp = Inputs.range([0.5, 15], {value: 6, step: 0.5, label: "Desvio-padrão entre UFs (τ, em pp)", format: (x) => fmt(x, 1)})
+viewof ntotal = Inputs.range([500, 20000], {value: 2000, step: 500, label: "Tamanho da amostra", format: (x) => fmt(x, 0)})
+viewof sorteio = Inputs.button("Novo sorteio", {value: 1, reduce: (v) => v + 1})
+```
+
+```{ojs}
+//| echo: false
+mu = 0.6
+sigma = Math.sqrt(mu * (1 - mu))
+tau = tau_pp / 100
+ufs = transpose(ufs_c2)
+grupos = {
+  const r = rng(100 + sorteio);
+  return ufs.map((u) => {
+    const n = Math.max(1, Math.round(u.share * ntotal));
+    const alfa = mu + tau * r.normal();
+    const ybar = alfa + (sigma / Math.sqrt(n)) * r.normal();
+    const lambda = tau ** 2 / (tau ** 2 + sigma ** 2 / n);
+    return {estado: u.estado, n, alfa, ybar, lambda, parcial: lambda * ybar + (1 - lambda) * mu};
+  }).sort((a, b) => b.n - a.n);
+}
+reqm = (campo) => Math.sqrt(grupos.reduce((s, g) => s + (g[campo] - g.alfa) ** 2, 0) / grupos.length)
+```
+
+```{ojs}
+//| echo: false
+Plot.plot({
+  width, height: 520, style: plotStyle, marginLeft: 130,
+  x: {label: "Proporção estimada →", domain: [0, 1], tickFormat: (d) => fmt(100 * d, 0) + "%"},
+  clip: true,
+  y: {domain: grupos.map((g) => g.estado), label: null},
+  marks: [
+    Plot.ruleX([mu], {stroke: pal.lineStrong}),
+    Plot.link(grupos, {x1: "ybar", x2: "parcial", y1: "estado", y2: "estado", stroke: pal.lineStrong}),
+    Plot.dot(grupos, {x: "ybar", y: "estado", stroke: pal.ink3, r: 3.5}),
+    Plot.dot(grupos, {x: "parcial", y: "estado", fill: pal.accent, r: 3.5}),
+    Plot.dot(grupos, {x: "alfa", y: "estado", symbol: "times", stroke: pal.ink, r: 4})
+  ]
+})
+```
+
+```{ojs}
+//| echo: false
+html`<p class="cn-readout">REQM por UF: médias separadas <b>${fmt(100 * reqm("ybar"), 1)} pp</b> · <i>partial pooling</i> <b>${fmt(100 * reqm("parcial"), 1)} pp</b> · λ de São Paulo <b>${fmt(grupos[0].lambda, 2)}</b> · λ da menor UF <b>${fmt(grupos[grupos.length - 1].lambda, 2)}</b></p>`
+```
+
+:::
+
+### Em R
+
+```{r}
+#| eval: false
+# mesmo procedimento da aba interativa (o sorteio nao e o mesmo)
+set.seed(100)
+mu <- 0.6; sigma <- sqrt(mu * (1 - mu)); tau <- 0.06; ntotal <- 2000
+ufs <- pop |> count(estado) |> mutate(share = n / sum(n))
+grupos <- ufs |>
+  mutate(n       = pmax(1, round(share * ntotal)),
+         alfa    = mu + tau * rnorm(n()),
+         ybar    = alfa + sigma / sqrt(n) * rnorm(n()),
+         lambda  = tau^2 / (tau^2 + sigma^2 / n),
+         parcial = lambda * ybar + (1 - lambda) * mu)
+# REQM em pontos percentuais
+with(grupos, 100 * c(separadas = sqrt(mean((ybar - alfa)^2)),
+                     partial   = sqrt(mean((parcial - alfa)^2))))
+grupos |> select(estado, n, lambda) |> arrange(desc(n))
+```
+
+:::
+
+## Armadilhas
+
+- Os grupos são tratados como intercambiáveis. O _prior_ $\alpha_j \sim \mathcal{N}(\mu, \tau^2)$ supõe que, antes de ver os dados, não há razão para esperar que uma UF seja diferente de outra. Se as UFs do Nordeste diferem sistematicamente das do Sul, encolher todas para a mesma média enviesa as menores. A solução é incluir preditores de nível de grupo, como região ou indicadores estaduais, que passam a definir a média para a qual cada UF é encolhida ([capítulo 3](03-estimador-mrp.qmd)).
+- Estimativas de $\tau$ na fronteira: um $\hat{\tau} = 0$ não significa que os grupos são iguais, só que os dados não distinguem a diferença do ruído. Tratá-lo como zero produz intervalos estreitos demais.
+- _Pooling_ não corrige seleção. O modelo multinível estabiliza as estimativas por grupo, mas, se os respondentes de uma UF não representam a UF, as estimativas continuam enviesadas; a correção da composição vem da pós-estratificação.
+- Poucas categorias: efeitos aleatórios para variáveis com poucas categorias estimam uma variância a partir de poucos números, e a estimativa pode cair perto de zero e apagar diferenças reais; efeitos fixos costumam ser preferíveis.
+
+## Leituras
+
+@gelman2007data [caps. 11 a 14] é a introdução clássica aos modelos multinível, com o exemplo do radônio que motiva o _partial pooling_. @efron1977stein explicam o paradoxo de Stein de forma acessível. @bates2015fitting e @burkner2017brms documentam os pacotes usados aqui.

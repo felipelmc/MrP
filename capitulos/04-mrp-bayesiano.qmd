@@ -1,0 +1,455 @@
+---
+title: "MrP bayesiano e incerteza"
+description: "Propagar a incerteza de todos os parâmetros para as estimativas pós-estratificadas: priors, diagnósticos, pós-estratificação por draw e cobertura dos intervalos."
+eyebrow: "Capítulo 04"
+---
+
+{{< include _aviso-ia.qmd >}}
+
+```{r}
+#| label: c4-setup
+#| include: false
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+source(here::here("R/mundo.R"))
+source(here::here("R/utils.R"))
+source(here::here("R/mrp.R"))
+suppressMessages({
+  library(tidyverse)
+  library(brms)
+  library(survey)
+  library(gt)
+  library(ggdist)
+})
+theme_set(theme_notes())
+mundo <- carregar_mundo()
+pop   <- mundo$pop
+frame <- frame_populacao(pop)
+dims  <- c("sexo", "faixa_etaria", "escolaridade_3cat", "cor_raca")
+dir.create(here::here("modelos"), showWarnings = FALSE)
+
+nomes_dim  <- c(Total = "Nacional", sexo = "Sexo", faixa_etaria = "Faixa etária",
+                escolaridade_3cat = "Escolaridade", cor_raca = "Cor/raça")
+nome_grupo <- function(g) recode(g, "16_24" = "16 a 24", "25_34" = "25 a 34",
+                                 "35_44" = "35 a 44", "45_54" = "45 a 54",
+                                 "55_64" = "55 a 64", "65_+" = "65 ou mais")
+
+# valor verdadeiro de cada estimando, com os rotulos de pos_estratificar()
+verdades <- bind_rows(
+  tibble(estimando = "Total", verdade = mean(pop$y)),
+  map_dfr(dims, \(v) pop |> group_by(nivel = as.character(.data[[v]])) |>
+            summarise(verdade = mean(y)) |>
+            transmute(estimando = paste0(v, ": ", nivel), verdade))
+)
+```
+
+## Intuição
+
+O [capítulo 3](03-estimador-mrp.qmd) produziu estimativas pontuais: um número para o país e um para cada subgrupo. Mas cada estimativa depende de parâmetros estimados com incerteza (os efeitos de escolaridade, de idade, de cada UF), e a incerteza desses parâmetros deveria aparecer na estimativa final. Calcular um erro-padrão para uma soma ponderada de milhares de predições, cada uma dependendo de vários parâmetros correlacionados, é difícil pelos métodos usuais.
+
+A abordagem bayesiana resolve isso de forma direta. O ajuste produz milhares de sorteios (_draws_) dos parâmetros, cada um compatível com os dados. Para cada sorteio, faz-se a pós-estratificação completa, e o resultado é um sorteio da estimativa nacional (ou de um subgrupo). A dispersão desses sorteios é a incerteza da estimativa, com todas as correlações entre parâmetros levadas em conta.
+
+Há um limite que convém deixar claro desde já: essa incerteza é condicional ao modelo e à hipótese de ignorabilidade. Ela não inclui o erro de uma seleção que dependa de variáveis fora do _frame_.
+
+## Formalização
+
+### A distribuição _a posteriori_
+
+O modelo é o do [capítulo 3](03-estimador-mrp.qmd), agora com _priors_:
+
+$$
+\begin{aligned}
+y_i &\sim \text{Bernoulli}(\pi_i), \qquad
+\text{logit}(\pi_i) = \beta_0 + \mathbf{x}_i^\top \boldsymbol{\beta} + \alpha_{j[i]}, \qquad
+\alpha_j \sim \mathcal{N}(0, \tau^2), \\
+\beta_0 &\sim t_3(0;\, 2{,}5), \qquad \beta_k \sim \mathcal{N}(0, 1), \qquad \tau \sim \mathcal{N}^+(0, 1),
+\end{aligned}
+$$
+
+onde $t_3(0;\, 2{,}5)$ é uma $t$ de Student com 3 graus de liberdade e escala 2,5, e $\mathcal{N}^+$ é uma normal truncada em zero (meia-normal). A distribuição _a posteriori_ de todos os parâmetros é proporcional ao produto da verossimilhança e dos _priors_,
+
+$$
+p(\beta_0, \boldsymbol{\beta}, \boldsymbol{\alpha}, \tau \mid \mathbf{y}) \;\propto\; \prod_i \pi_i^{y_i}(1 - \pi_i)^{1 - y_i} \;\prod_j \mathcal{N}(\alpha_j \mid 0, \tau^2)\; p(\beta_0)\, p(\boldsymbol{\beta})\, p(\tau),
+$$
+
+e não tem forma fechada. O Stan [@carpenter2017stan] gera $S$ sorteios $(\beta_0^{(s)}, \boldsymbol{\beta}^{(s)}, \boldsymbol{\alpha}^{(s)}, \tau^{(s)})$ dessa distribuição.
+
+### O MrP _a posteriori_
+
+::: {#def-mrp-bayes}
+## MrP _a posteriori_
+Para cada sorteio $s$ e cada célula $c$ do _frame_, $\pi_c^{(s)} = \text{logit}^{-1}\big(\beta_0^{(s)} + \mathbf{x}_c^\top \boldsymbol{\beta}^{(s)} + \alpha_{j[c]}^{(s)}\big)$, e
+$$
+\boxed{\theta^{(s)} = \frac{\sum_c N_c\, \pi_c^{(s)}}{\sum_c N_c}}
+$$
+Os valores $\theta^{(1)}, \dots, \theta^{(S)}$ são sorteios da distribuição _a posteriori_ de $\theta$. A estimativa pontual é a mediana deles, e o intervalo de credibilidade de 90% vai do quantil 5% ao quantil 95%. Para um subgrupo, restringe-se a soma às células do subgrupo em cada sorteio.
+:::
+
+A pós-estratificação é feita sorteio a sorteio, e não sobre as médias dos parâmetros. Se o efeito da escolaridade e o intercepto forem estimados com correlação negativa, por exemplo, os sorteios em que um é alto tendem a ter o outro baixo, e a soma sobre as células leva isso em conta automaticamente.
+
+Uma sutileza: $\theta^{(s)}$ é a proporção esperada sob o modelo (um estimando de superpopulação). A média da população finita, $\bar{Y}$, inclui ainda o sorteio individual de cada pessoa, cuja variância é da ordem de $\bar{Y}(1 - \bar{Y})/N$. Com $N$ na casa dos milhões, essa diferença é desprezível.
+
+### _Priors_ fracamente informativos
+
+Na escala logit, um coeficiente igual a 1 multiplica a razão de chances por $e \approx 2{,}7$, e um coeficiente igual a 3, por cerca de 20. Um _prior_ $\mathcal{N}(0, 1)$ para os efeitos demográficos torna improváveis (cerca de 5% de probabilidade) efeitos maiores que 2 em valor absoluto, o que é compatível com o que se sabe sobre atitudes políticas, e ainda deixa os dados dominarem com amostras de milhares de pessoas. _Priors_ muito vagos, como $\mathcal{N}(0, 10^2)$, parecem neutros mas não são: eles implicam que, antes de ver os dados, probabilidades muito próximas de 0 ou de 1 são as mais plausíveis, o que a seção "Em R" mostra com a distribuição preditiva _a priori_. Para o desvio-padrão entre UFs, a meia-normal $\mathcal{N}^+(0, 1)$ admite desde diferenças nulas até diferenças grandes, e evita a estimativa na fronteira $\hat{\tau} = 0$ que o Bayes empírico produz ([capítulo 2](02-modelos-multinivel.qmd)).
+
+### Como saber se o amostrador funcionou
+
+O Stan usa Monte Carlo Hamiltoniano: em vez de propor saltos aleatórios, segue a geometria da distribuição _a posteriori_ usando o gradiente do log da densidade, o que permite passos longos e sorteios pouco correlacionados. Três diagnósticos são padrão:
+
+- $\hat{R}$ compara a variação dentro de cada cadeia com a variação entre cadeias; perto de 1 indica que as cadeias exploraram a mesma distribuição, e o critério usual é $\hat{R} < 1{,}01$ [@vehtari2021rank];
+- o tamanho efetivo de amostra (ESS, _bulk_ e _tail_) diz a quantos sorteios independentes os sorteios correlacionados equivalem, no centro e nas caudas da distribuição; valores acima de 400 costumam bastar;
+- transições divergentes indicam regiões em que o amostrador não conseguiu seguir a geometria, frequentes em modelos hierárquicos quando $\tau$ é pequeno. Elas pedem um passo menor (`adapt_delta` mais alto) ou outra parametrização.
+
+Os diagnósticos dizem se os sorteios representam a distribuição _a posteriori_, e não se o modelo é bom. Para isso, compara-se o observado com dados simulados a partir do modelo (_posterior predictive checks_) [@gabry2019visualization].
+
+### O que a cobertura mede
+
+Um intervalo de credibilidade de 90% é uma afirmação sobre a distribuição _a posteriori_. Mas também se pode perguntar com que frequência, em muitas amostras, os intervalos de 90% contêm o valor verdadeiro. Se o modelo estiver bem especificado, a seleção for ignorável dado o _frame_ e os _priors_ não forem enganosos, essa cobertura fica perto de 90%. Numa amostra autosselecionada, a cobertura é um teste conjunto dessas três condições.
+
+## Em R
+
+### O que os _priors_ implicam
+
+Antes de ver os dados, vale perguntar que probabilidades os _priors_ tornam plausíveis. Ajustamos o modelo só com os _priors_ (`sample_prior = "only"`), uma vez com os _priors_ acima e outra com $\mathcal{N}(0, 10^2)$ para todos os coeficientes e desvios-padrão, e olhamos a probabilidade predita para os respondentes.
+
+```{r}
+#| label: c4-priors
+set.seed(42)
+amostra <- amostrar_optin(pop, n = 2000)
+formula_m5 <- y ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado)
+
+priors_c4 <- c(prior(student_t(3, 0, 2.5), class = Intercept),
+               prior(normal(0, 1), class = b),
+               prior(normal(0, 1), class = sd))
+priors_vagos <- c(prior(normal(0, 10), class = Intercept),
+                  prior(normal(0, 10), class = b),
+                  prior(normal(0, 10), class = sd))
+
+ajustar_prior <- function(pr, nome) {
+  brm(formula_m5, data = amostra, family = bernoulli(), prior = pr,
+      sample_prior = "only", chains = 4, cores = 4, iter = 1000, seed = 2023,
+      backend = "cmdstanr", refresh = 0, silent = 2,
+      file = here::here("modelos", nome), file_refit = "on_change")
+}
+fit_prior <- ajustar_prior(priors_c4, "c4_prior")
+fit_vago  <- ajustar_prior(priors_vagos, "c4_prior_vago")
+
+prob_prior <- bind_rows(
+  "Fracamente informativos" = tibble(pi = c(posterior_epred(fit_prior, ndraws = 200))),
+  "Vagos, N(0, 10²)"        = tibble(pi = c(posterior_epred(fit_vago, ndraws = 200))),
+  .id = "prior"
+)
+```
+
+```{r}
+#| label: fig-c4-priors
+#| fig-cap: "Distribuição preditiva _a priori_ da probabilidade de cada respondente ter a atitude. Com _priors_ vagos, quase toda a massa fica perto de 0 ou de 1."
+#| fig-width: 7
+#| fig-height: 3
+ggplot(prob_prior, aes(x = pi)) +
+  geom_histogram(bins = 40, fill = cn_palette$ramp[2], colour = NA) +
+  facet_wrap(~ prior, scales = "free_y") +
+  scale_x_continuous(labels = rotulo_pct) +
+  labs(x = "Probabilidade predita", y = NULL) +
+  theme(axis.text.y = element_blank())
+```
+
+Com os _priors_ vagos, `r pct(mean(prob_prior$pi[prob_prior$prior != "Fracamente informativos"] < 0.05 | prob_prior$pi[prob_prior$prior != "Fracamente informativos"] > 0.95), 0)` das probabilidades preditas ficam abaixo de 5% ou acima de 95%, contra `r pct(mean(prob_prior$pi[prob_prior$prior == "Fracamente informativos"] < 0.05 | prob_prior$pi[prob_prior$prior == "Fracamente informativos"] > 0.95), 0)` com os _priors_ fracamente informativos. O _prior_ "sem informação" é, na verdade, uma afirmação forte sobre o mundo.
+
+### Ajuste e diagnósticos
+
+```{r}
+#| label: c4-ajuste
+fit_c4 <- brm(formula_m5, data = amostra, family = bernoulli(), prior = priors_c4,
+              chains = 4, cores = 4, iter = 2000, seed = 2023,
+              backend = "cmdstanr", refresh = 0, silent = 2,
+              file = here::here("modelos", "c4_m5"), file_refit = "on_change")
+
+diagnosticos <- posterior::summarise_draws(
+  posterior::subset_draws(as_draws_df(fit_c4), variable = "^(b_|sd_)", regex = TRUE),
+  "mean", "sd", "rhat", "ess_bulk", "ess_tail"
+)
+n_divergentes <- sum(subset(nuts_params(fit_c4), Parameter == "divergent__")$Value)
+```
+
+```{r}
+#| label: tbl-c4-diagnosticos
+#| tbl-cap: "Média e desvio-padrão _a posteriori_ dos parâmetros e diagnósticos do amostrador."
+diagnosticos |>
+  gt() |>
+  fmt_number(c(mean, sd), decimals = 2, dec_mark = ",") |>
+  fmt_number(rhat, decimals = 3, dec_mark = ",") |>
+  fmt_number(c(ess_bulk, ess_tail), decimals = 0, sep_mark = ".") |>
+  cols_label(variable = "Parâmetro", mean = "Média", sd = "DP", rhat = "R̂",
+             ess_bulk = "ESS bulk", ess_tail = "ESS tail")
+```
+
+O maior $\hat{R}$ é `r num(max(diagnosticos$rhat), 3)`, o menor ESS _bulk_ é `r inteiro(min(diagnosticos$ess_bulk))` e houve `r n_divergentes` transições divergentes. Os sorteios representam bem a distribuição _a posteriori_.
+
+A @fig-c4-ppc compara a proporção observada em cada nível de escolaridade com as proporções em conjuntos de dados simulados a partir do modelo ajustado.
+
+```{r}
+#| label: fig-c4-ppc
+#| fig-cap: "_Posterior predictive check_: distribuição da proporção com a atitude em 500 conjuntos de dados simulados, por escolaridade, e a proporção observada na amostra (linha)."
+#| fig-width: 7
+#| fig-height: 2.8
+pp_check(fit_c4, type = "stat_grouped", stat = "mean", group = "escolaridade_3cat",
+         ndraws = 500) +
+  theme_notes() +
+  theme(legend.position = "none")
+```
+
+### Pós-estratificação por sorteio
+
+A função `pos_estratificar()`, definida em [`R/mrp.R`](https://github.com/felipelmc/MrP/blob/main/R/mrp.R), calcula $\pi_c^{(s)}$ para todas as células em blocos (para caber na memória) e devolve uma matriz de sorteios por estimando: a proporção nacional e uma por nível de cada variável pedida.
+
+```{r}
+#| label: c4-pos
+draws_c4 <- pos_estratificar(fit_c4, frame, grupos = dims, ndraws = 2000)
+dim(draws_c4)
+
+resumo_c4 <- resumir_draws(draws_c4) |>
+  left_join(verdades, by = "estimando") |>
+  mutate(dimensao = if_else(estimando == "Total", "Total", sub(":.*$", "", estimando)),
+         grupo    = if_else(estimando == "Total", "Nacional", sub("^.*: ", "", estimando)))
+```
+
+```{r}
+#| label: fig-c4-intervalos
+#| fig-cap: "Estimativas MrP numa amostra opt-in: mediana e intervalos de 90% e 95% _a posteriori_, por estimando, e o valor verdadeiro (x)."
+#| fig-width: 7
+#| fig-height: 5.5
+resumo_c4 |>
+  mutate(rotulo = if_else(dimensao == "Total", "Nacional",
+                          paste0(nomes_dim[dimensao], ": ", nome_grupo(grupo))),
+         rotulo = fct_rev(fct_inorder(rotulo))) |>
+  ggplot(aes(y = rotulo)) +
+  geom_linerange(aes(xmin = q025, xmax = q975), colour = cn_palette$line_strong, linewidth = 0.8) +
+  geom_linerange(aes(xmin = q05, xmax = q95), colour = cn_palette$accent, linewidth = 1.6) +
+  geom_point(aes(x = mediana), colour = cn_palette$accent, size = 1.8) +
+  geom_point(aes(x = verdade), shape = 4, size = 2.5, colour = cn_palette$danger) +
+  scale_x_continuous(labels = rotulo_pct) +
+  labs(x = "Proporção com a atitude", y = NULL)
+```
+
+```{r}
+#| label: c4-valores
+#| include: false
+nac_c4 <- resumo_c4 |> filter(estimando == "Total")
+dentro <- mean(resumo_c4$verdade >= resumo_c4$q05 & resumo_c4$verdade <= resumo_c4$q95)
+```
+
+A estimativa nacional é `r pct(nac_c4$mediana)`, com intervalo de 90% de `r pct(nac_c4$q05)` a `r pct(nac_c4$q95)`, e o valor verdadeiro é `r pct(nac_c4$verdade)`, `r if (nac_c4$verdade >= nac_c4$q05 & nac_c4$verdade <= nac_c4$q95) "dentro do intervalo" else "fora do intervalo"`. Nesta amostra, `r pct(dentro, 0)` dos `r nrow(resumo_c4)` intervalos de 90% contêm o valor verdadeiro. Uma amostra só diz pouco sobre calibração, porque os erros dos estimandos de uma mesma amostra são correlacionados: quando a amostra sai deslocada (esta, mesmo depois da correção, `r if (nac_c4$mediana > nac_c4$verdade) "superestima" else "subestima"` a proporção nacional), quase todos os intervalos se deslocam juntos. A cobertura precisa ser medida em muitas amostras, o que a seção seguinte faz. Os intervalos dos subgrupos pequenos, como o de cor/raça "Outras", são bem mais largos que o nacional, como deveriam.
+
+### Cobertura em muitas amostras
+
+Uma amostra só não diz se os intervalos estão calibrados. O Monte Carlo abaixo repete, em 200 amostras _opt-in_, o ajuste bayesiano (reaproveitando o modelo já compilado com `update()`) e a pós-estratificação, e calcula, para cada estimando, a fração de intervalos de 90% que contém o valor verdadeiro. Para comparação, calcula o mesmo para o intervalo de 90% do _raking_ (estimativa $\pm$ 1,645 erros-padrão).
+
+```{r}
+#| label: c4-cobertura
+margens  <- map(VARS_FRAME, \(v) count(pop, across(all_of(v)), name = "Freq"))
+formulas <- map(VARS_FRAME, reformulate)
+
+estimar_c4 <- function(r, molde) {
+  a <- amostrar_optin(pop)
+  f <- update(molde, newdata = a, recompile = FALSE, chains = 4, cores = 4,
+              iter = 1000, seed = r, refresh = 0, silent = 2)
+  mrp <- resumir_draws(pos_estratificar(f, frame, grupos = dims, ndraws = 1000)) |>
+    select(estimando, est = mediana, lo = q05, hi = q95)
+  div <- sum(subset(nuts_params(f), Parameter == "divergent__")$Value)
+  rk <- tryCatch(rake(svydesign(ids = ~1, data = a), formulas, margens,
+                      control = list(maxit = 50)), error = function(e) NULL)
+  raking <- if (is.null(rk)) NULL else {
+    tot <- svymean(~y, rk)
+    bind_rows(
+      tibble(estimando = "Total", est = coef(tot)[[1]], ep = SE(tot)[[1]]),
+      map_dfr(dims, \(v) svyby(~y, reformulate(v), rk, svymean) |> as_tibble() |>
+                transmute(estimando = paste0(v, ": ", .data[[v]]), est = y, ep = se))
+    ) |>
+      mutate(lo = est - 1.645 * ep, hi = est + 1.645 * ep) |>
+      select(-ep)
+  }
+  bind_rows(MrP = mrp, Raking = raking, .id = "metodo") |>
+    mutate(replica = r, divergentes = div)
+}
+
+mc4 <- com_cache("c4_cobertura",
+                 list(mundo$chave, 200, deparse(estimar_c4), deparse(pos_estratificar)),
+                 {
+                   # o ajuste lido do arquivo nao guarda o modelo compilado
+                   molde <- update(fit_c4, recompile = TRUE, chains = 1, iter = 20,
+                                   refresh = 0, silent = 2, seed = 1)
+                   monte_carlo(200, \(r) estimar_c4(r, molde), cores = 1)
+                 })
+
+cobertura_c4 <- mc4 |>
+  left_join(verdades, by = "estimando") |>
+  mutate(dimensao = if_else(estimando == "Total", "Total", sub(":.*$", "", estimando)),
+         cobre = verdade >= lo & verdade <= hi,
+         largura = 100 * (hi - lo)) |>
+  group_by(metodo, dimensao, estimando) |>
+  summarise(cobertura = mean(cobre), largura = mean(largura), .groups = "drop")
+```
+
+```{r}
+#| label: tbl-c4-cobertura
+#| tbl-cap: "Cobertura dos intervalos de 90% em 200 amostras opt-in e largura média (pontos percentuais), por dimensão (média entre as categorias)."
+cobertura_c4 |>
+  group_by(metodo, dimensao) |>
+  summarise(cobertura = mean(cobertura), largura = mean(largura), .groups = "drop") |>
+  mutate(dimensao = factor(nomes_dim[dimensao], levels = nomes_dim)) |>
+  arrange(dimensao, metodo) |>
+  gt(groupname_col = "dimensao", rowname_col = "metodo") |>
+  fmt_percent(cobertura, decimals = 0, dec_mark = ",") |>
+  fmt_number(largura, decimals = 1, dec_mark = ",") |>
+  cols_label(cobertura = "Cobertura", largura = "Largura")
+```
+
+```{r}
+#| label: fig-c4-cobertura
+#| fig-cap: "Cobertura dos intervalos de 90% por estimando, em 200 amostras opt-in. A faixa cinza mostra a variação esperada da cobertura por acaso quando a cobertura verdadeira é 90%."
+#| fig-width: 7
+#| fig-height: 5.5
+faixa <- 1.96 * sqrt(0.9 * 0.1 / 200)
+rotulos_c4 <- c("Nacional",
+                unlist(map(dims, \(v) paste0(nomes_dim[v], ": ", nome_grupo(NIVEIS[[v]])))))
+cobertura_c4 |>
+  mutate(rotulo = if_else(dimensao == "Total", "Nacional",
+                          paste0(nomes_dim[dimensao], ": ", nome_grupo(sub("^.*: ", "", estimando)))),
+         rotulo = factor(rotulo, levels = rev(rotulos_c4))) |>
+  ggplot(aes(x = cobertura, y = rotulo, shape = metodo, colour = metodo)) +
+  annotate("rect", xmin = 0.9 - faixa, xmax = 0.9 + faixa, ymin = -Inf, ymax = Inf,
+           fill = cn_palette$line, alpha = 0.7) +
+  geom_vline(xintercept = 0.9, linetype = "dashed", colour = cn_palette$ink3) +
+  geom_point(size = 2.2) +
+  scale_colour_notes() +
+  scale_x_continuous(labels = rotulo_pct) +
+  labs(x = "Cobertura do intervalo de 90%", y = NULL, colour = NULL, shape = NULL)
+```
+
+```{r}
+#| label: c4-valores-cob
+#| include: false
+cob <- function(m, d) with(filter(cobertura_c4, metodo == m, dimensao == d), mean(cobertura))
+lar <- function(m, d) with(filter(cobertura_c4, metodo == m, dimensao == d), mean(largura))
+div_total <- sum(distinct(mc4, replica, divergentes)$divergentes)
+```
+
+No nível nacional, os intervalos de 90% do MrP contêm a verdade em `r pct(cob("MrP", "Total"), 0)` das amostras, e os do _raking_, em `r pct(cob("Raking", "Total"), 0)`. Nos subgrupos, a cobertura média do MrP é de `r pct(cob("MrP", "faixa_etaria"), 0)` nas faixas etárias e `r pct(cob("MrP", "cor_raca"), 0)` em cor/raça, contra `r pct(cob("Raking", "faixa_etaria"), 0)` e `r pct(cob("Raking", "cor_raca"), 0)` no _raking_. A falha do _raking_ nas faixas etárias vem do viés do [capítulo 3](03-estimador-mrp.qmd): seus intervalos são centrados num valor errado, e a largura (`r num(lar("Raking", "faixa_etaria"))` pp, contra `r num(lar("MrP", "faixa_etaria"))` pp do MrP) não compensa o erro. Ao longo das 200 réplicas houve `r div_total` transições divergentes no total.
+
+A calibração do MrP aqui depende de o modelo estar certo: o mundo sintético foi gerado por um modelo de efeitos principais com efeitos de UF normais, exatamente a estrutura ajustada. O [capítulo 5](05-especificacao-validacao.qmd) mostra o que acontece com a cobertura quando o modelo omite uma interação presente na população, e o [capítulo 7](07-frames-nao-censitarios.qmd), quando a seleção depende de uma variável fora do _frame_.
+
+## Simulação
+
+No modelo normal do [capítulo 2](02-modelos-multinivel.qmd), com $J$ grupos de mesmo tamanho e $\sigma$ conhecido, a verossimilhança de $\tau$ (integrando $\mu$ com um _prior_ plano) depende só da soma dos quadrados das médias em torno da média geral, $Q = \sum_j (\bar{y}_j - \bar{y})^2$:
+
+$$
+L(\tau) \;\propto\; v^{-(J-1)/2} \exp\!\left(-\frac{Q}{2v}\right), \qquad v = \tau^2 + \frac{\sigma^2}{n}.
+$$
+
+A simulação calcula a distribuição _a posteriori_ de $\tau$ numa grade, com _prior_ meia-normal, e a compara com a estimativa de máxima verossimilhança restrita, $\hat{\tau}^2 = \max\{0,\, Q/(J-1) - \sigma^2/n\}$. Com poucos grupos, a estimativa pontual cai muitas vezes em zero, enquanto a distribuição _a posteriori_ continua admitindo valores positivos; a escala do _prior_ passa a importar.
+
+::: {.panel-tabset}
+
+### Interativo
+
+```{ojs}
+//| echo: false
+import {scheme, palette, plotStyle, rng, fmt} from "/_extensions/felipelmc/course-notes/ojs/notes.js"
+mode = scheme()
+pal = palette(mode)
+```
+
+::: cn-sim
+
+```{ojs}
+//| echo: false
+viewof J = Inputs.range([3, 50], {value: 8, step: 1, label: "Número de grupos (J)", format: (x) => fmt(x, 0)})
+viewof tau_real = Inputs.range([0, 0.6], {value: 0.2, step: 0.02, label: "τ verdadeiro", format: (x) => fmt(x, 2)})
+viewof escala = Inputs.range([0.1, 2], {value: 1, step: 0.1, label: "Escala do prior (meia-normal)", format: (x) => fmt(x, 1)})
+viewof sorteio = Inputs.button("Novo sorteio", {value: 1, reduce: (v) => v + 1})
+```
+
+```{ojs}
+//| echo: false
+n = 25
+sigma = 1
+se2 = sigma ** 2 / n
+medias = {
+  const r = rng(7 + sorteio);
+  return Array.from({length: J}, () => tau_real * r.normal() + Math.sqrt(se2) * r.normal());
+}
+media_geral = medias.reduce((s, x) => s + x, 0) / J
+Q = medias.reduce((s, x) => s + (x - media_geral) ** 2, 0)
+tau_reml = Math.sqrt(Math.max(0, Q / (J - 1) - se2))
+grade = d3.range(0, 1.2001, 0.002)
+logpost = grade.map((t) => {
+  const v = t ** 2 + se2;
+  return -((J - 1) / 2) * Math.log(v) - Q / (2 * v) - t ** 2 / (2 * escala ** 2);
+})
+maxlp = Math.max(...logpost)
+dens = {
+  const d = logpost.map((lp) => Math.exp(lp - maxlp));
+  const soma = d.reduce((s, x) => s + x, 0) * 0.002;
+  return grade.map((t, i) => ({tau: t, densidade: d[i] / soma}));
+}
+mediana = {
+  let acum = 0;
+  for (const p of dens) { acum += p.densidade * 0.002; if (acum >= 0.5) return p.tau; }
+}
+```
+
+```{ojs}
+//| echo: false
+Plot.plot({
+  width, height: 300, style: plotStyle, marginLeft: 40,
+  x: {label: "τ →", tickFormat: (d) => fmt(d, 1)},
+  y: {label: "↑ Densidade a posteriori", tickFormat: (d) => fmt(d, 1)},
+  marks: [
+    Plot.areaY(dens, {x: "tau", y: "densidade", fill: pal.accent, fillOpacity: 0.2}),
+    Plot.lineY(dens, {x: "tau", y: "densidade", stroke: pal.accent, strokeWidth: 2}),
+    Plot.ruleX([tau_reml], {stroke: pal.ink3, strokeDasharray: "4,3"}),
+    Plot.ruleX([tau_real], {stroke: pal.ink, strokeWidth: 1.5})
+  ]
+})
+```
+
+```{ojs}
+//| echo: false
+html`<p class="cn-readout">Estimativa pontual (tracejada) <b>${fmt(tau_reml, 2)}</b> · mediana <i>a posteriori</i> <b>${fmt(mediana, 2)}</b> · valor verdadeiro (linha cheia) <b>${fmt(tau_real, 2)}</b></p>`
+```
+
+:::
+
+### Em R
+
+```{r}
+#| eval: false
+set.seed(7)
+J <- 8; n <- 25; sigma <- 1; tau_real <- 0.2; escala <- 1
+se2    <- sigma^2 / n
+medias <- tau_real * rnorm(J) + sqrt(se2) * rnorm(J)
+Q      <- sum((medias - mean(medias))^2)
+
+grade   <- seq(0, 1.2, by = 0.002)
+v       <- grade^2 + se2
+logpost <- -((J - 1) / 2) * log(v) - Q / (2 * v) - grade^2 / (2 * escala^2)
+dens    <- exp(logpost - max(logpost))
+dens    <- dens / sum(dens * 0.002)
+
+c(reml    = sqrt(max(0, Q / (J - 1) - se2)),
+  mediana = grade[which(cumsum(dens * 0.002) >= 0.5)[1]])
+```
+
+:::
+
+## Armadilhas
+
+- A incerteza é condicional ao modelo. Os intervalos de credibilidade supõem que a seleção é ignorável dado o _frame_ e que o modelo aproxima bem $\mathbb{E}[Y \mid X]$. Eles não medem o viés de uma variável omitida do _frame_ e podem ser estreitos em torno de um valor errado.
+- _Priors_ "vagos" não são neutros. Na escala logit, $\mathcal{N}(0, 10^2)$ afirma que probabilidades extremas são as mais plausíveis; com poucos dados por célula, isso contamina as predições.
+- Diagnósticos ruins não se ignoram. Transições divergentes ou $\hat{R}$ alto significam que os sorteios não representam a distribuição _a posteriori_, e as estimativas pós-estratificadas herdam o problema.
+- Memória: o número de células vezes o número de sorteios cresce rápido. Pós-estratificar em blocos e agregar direto para os estimandos evita guardar a matriz inteira.
+
+## Leituras
+
+@lopezmartin2022multilevel apresentam o MrP bayesiano com `rstanarm` e `brms`, com código. @burkner2017brms documenta o `brms`, e @carpenter2017stan, o Stan. @vehtari2021rank definem o $\hat{R}$ e os tamanhos efetivos de amostra usados hoje, e @gabry2019visualization mostram como usar gráficos em cada etapa do trabalho bayesiano, dos _priors_ aos _posterior predictive checks_. @kennedy2021know discutem o MrP como forma de generalizar estimativas para uma população definida, com ênfase no que o modelo precisa acertar.

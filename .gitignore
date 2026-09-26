@@ -25,3 +25,7 @@ Thumbs.db
 /.claude/
 
 **/*.quarto_ipynb
+
+# resultados de simulacao e modelos Stan (regeneraveis localmente)
+/_cache-sim/
+/modelos/

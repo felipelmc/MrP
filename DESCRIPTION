@@ -1,10 +1,27 @@
-Package: coursenotes
-Title: Pacotes de R usados nas páginas desta disciplina
+Package: mrpnotes
+Title: Pacotes de R usados nas páginas deste livro
 Version: 0.0.1
 Description: Não é um pacote de verdade. Este arquivo lista as dependências de R para
     instalar localmente com `pak::local_install_deps()` antes de `quarto render`.
+    O brms usa o CmdStan, instalado com `cmdstanr::install_cmdstan()`.
 Imports:
+    brms,
+    cmdstanr,
+    dplyr,
+    forcats,
+    ggdist,
     ggplot2,
+    gt,
     here,
     knitr,
-    rmarkdown
+    lme4,
+    posterior,
+    purrr,
+    rmarkdown,
+    scales,
+    survey,
+    tibble,
+    tidyr,
+    tidyverse
+Remotes:
+    stan-dev/cmdstanr

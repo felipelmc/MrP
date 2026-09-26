@@ -1,0 +1,415 @@
+---
+title: "Especificação e validação do modelo"
+description: "Interações com partial pooling, priors estruturados e como escolher o modelo quando o que importa são as estimativas agregadas, e não o ajuste individual."
+eyebrow: "Capítulo 05"
+---
+
+{{< include _aviso-ia.qmd >}}
+
+```{r}
+#| label: c5-setup
+#| include: false
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+source(here::here("R/mundo.R"))
+source(here::here("R/mundo_interacao.R"))
+source(here::here("R/utils.R"))
+source(here::here("R/mrp.R"))
+suppressMessages({
+  library(tidyverse)
+  library(lme4)
+  library(brms)
+  library(loo)
+  library(gt)
+})
+theme_set(theme_notes())
+mundo <- carregar_mundo_interacao()
+pop   <- mundo$pop |> mutate(escol_idade = paste(escolaridade_3cat, faixa_etaria, sep = " × "))
+frame <- pop |> count(across(all_of(c(VARS_FRAME, "escol_idade"))), name = "N")
+dir.create(here::here("modelos"), showWarnings = FALSE)
+
+nome_faixa <- c("16_24" = "16 a 24", "25_34" = "25 a 34", "35_44" = "35 a 44",
+                "45_54" = "45 a 54", "55_64" = "55 a 64", "65_+" = "65 ou mais")
+nome_celula <- function(x) {
+  escol <- sub(" × .*$", "", x); faixa <- sub("^.* × ", "", x)
+  paste0(sub("Ensino ", "", escol), ", ", nome_faixa[faixa])
+}
+
+# verdade de cada estimando: nacional e as 18 combinacoes de escolaridade x idade
+verdade_de <- function(var_y) {
+  bind_rows(
+    tibble(estimando = "Total", verdade = mean(pop[[var_y]])),
+    pop |> group_by(nivel = escol_idade) |> summarise(verdade = mean(.data[[var_y]])) |>
+      transmute(estimando = paste0("escol_idade: ", nivel), verdade)
+  )
+}
+verdades_int   <- verdade_de("y_int")
+verdades_bench <- verdade_de("y_bench")
+```
+
+## Intuição
+
+O MrP precisa de um modelo que acerte a média do desfecho em cada célula do _frame_, inclusive nas que têm poucos respondentes. Nos capítulos anteriores, o mundo sintético foi gerado por um modelo de efeitos principais, a mesma estrutura ajustada. Na prática, a estrutura verdadeira é desconhecida. Se o efeito da escolaridade for maior entre os jovens do que entre os mais velhos, um modelo que impõe o mesmo efeito em todas as idades erra justamente as combinações de escolaridade e idade, e erra mais onde a amostra é mais distorcida.
+
+Há duas perguntas. A primeira é como especificar o modelo: que interações incluir e como controlar o risco de sobreajuste com tantas combinações. A segunda é como escolher entre especificações. O critério natural, a qualidade das predições individuais (validação cruzada, AIC), responde a outra pergunta: ele mede o quão bem o modelo prevê os respondentes da amostra, que é autosselecionada, e não o quão bem acerta as médias da população. Este capítulo trata das duas perguntas num mundo sintético em que o efeito da escolaridade muda com a idade.
+
+## Formalização
+
+### Interações com _partial pooling_
+
+Considere três especificações para o logit de $\pi_i$, com $m[i]$ o nível de escolaridade e $l[i]$ a faixa etária da pessoa $i$:
+
+$$
+\begin{aligned}
+\text{(A) efeitos principais:} &\quad \beta_0 + \mathbf{x}_i^\top \boldsymbol{\beta} + \alpha^{(\text{UF})}_{j[i]}, \\
+\text{(B) interação com pooling:} &\quad \beta_0 + \mathbf{x}_i^\top \boldsymbol{\beta} + \alpha^{(\text{UF})}_{j[i]} + \gamma_{m[i]\,l[i]}, \qquad \gamma_{ml} \sim \mathcal{N}(0, \tau_\gamma^2), \\
+\text{(C) interação sem pooling:} &\quad \beta_0 + \mathbf{x}_i^\top \boldsymbol{\beta} + \alpha^{(\text{UF})}_{j[i]} + \delta_{ml}, \qquad \delta_{ml} \text{ livres}.
+\end{aligned}
+$$
+
+A especificação (A) impõe que a diferença entre níveis de escolaridade seja a mesma em todas as idades. A (C) estima um desvio livre para cada uma das combinações (menos as de referência), o que elimina o viés de especificação mas custa variância nas combinações com poucos respondentes. A (B), proposta por @ghitza2013deep, trata os desvios como efeitos aleatórios: se os dados não sustentam a interação, $\hat{\tau}_\gamma$ fica pequeno e o modelo volta a (A); se sustentam, os desvios são estimados, encolhidos na proporção da informação disponível em cada combinação, como no [capítulo 2](02-modelos-multinivel.qmd).
+
+### _Priors_ estruturados
+
+Um efeito aleatório para as faixas etárias trata as seis categorias como intercambiáveis: a faixa de 25 a 34 anos é encolhida para a média geral tanto quanto a de 65 ou mais. Mas as categorias são ordenadas, e é razoável esperar que faixas vizinhas tenham efeitos parecidos. @gao2021improving propõem _priors_ estruturados que usam essa ordem, como o passeio aleatório de primeira ordem,
+
+$$
+\alpha^{(\text{idade})}_l - \alpha^{(\text{idade})}_{l-1} \sim \mathcal{N}(0, \tau^2_{\text{idade}}), \qquad l = 2, \dots, 6,
+$$
+
+em que cada faixa é encolhida em direção às vizinhas, e não à média geral. A vantagem aparece sobretudo nas interações, em que muitas combinações têm poucos respondentes: uma combinação escassa de idade e escolaridade toma emprestada a informação das faixas adjacentes. No `brms`, um passeio aleatório de primeira ordem pode ser escrito como um efeito condicional autorregressivo intrínseco (`car()`, com `type = "icar"`) sobre uma matriz de adjacência em cadeia. Na prática, esse termo se confunde com o intercepto e pode gerar problemas de amostragem; num teste com o mundo sintético, mais da metade das transições atingiu a profundidade máxima de árvore do amostrador. @gao2021improving implementam os modelos diretamente em Stan.
+
+### Validar o quê?
+
+A validação cruzada _leave-one-out_ (LOO) estima a capacidade de prever novos indivíduos:
+
+$$
+\text{elpd}_{\text{loo}} = \sum_{i=1}^{n} \log p(y_i \mid \mathbf{y}_{-i}),
+$$
+
+a soma, sobre os respondentes, da densidade preditiva de cada um obtida sem ele no ajuste. Há dois descompassos entre esse critério e o objetivo do MrP [@kuh2024leaveoneout; @kennedy2023model]. Primeiro, a soma pondera as células pela sua participação na amostra, e não na população: numa amostra que sobre-representa pessoas com ensino superior, os erros nessas células pesam mais do que deveriam. Segundo, o critério soma a qualidade das predições individuais, enquanto o estimando é uma média de células: um modelo pode ter predições individuais quase tão boas quanto as de outro e, ainda assim, errar sistematicamente as médias de algumas células, porque o ruído individual (uma resposta binária) domina a verossimilhança.
+
+A alternativa é validar contra o que se quer acertar: quantidades populacionais conhecidas que tenham estrutura parecida com a do desfecho. Nas aplicações, são resultados eleitorais, dados de censo ou registros administrativos. Um benchmark só é informativo se não entrar no _frame_ nem no modelo, e se compartilhar com o desfecho a estrutura que o modelo precisa captar.
+
+## Em R
+
+### Uma amostra, três modelos
+
+No mundo deste capítulo, o desfecho `y_int` tem os mesmos efeitos principais dos capítulos anteriores, mais um desvio que torna o efeito do ensino superior maior entre os jovens e nulo entre as pessoas de 65 anos ou mais (definido em [`R/mundo_interacao.R`](https://github.com/felipelmc/MrP/blob/main/R/mundo_interacao.R)). Ajustamos as três especificações com `brms`, comparamos o LOO e pós-estratificamos para o total nacional e para as 18 combinações de escolaridade e idade.
+
+```{r}
+#| label: c5-uma-amostra
+set.seed(42)
+amostra <- amostrar_optin(pop, n = 2000)
+
+priors_c5 <- c(prior(student_t(3, 0, 2.5), class = Intercept),
+               prior(normal(0, 1), class = b),
+               prior(normal(0, 1), class = sd))
+formulas_c5 <- list(
+  "A. Efeitos principais" =
+    y_int ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado),
+  "B. Interação com pooling" =
+    y_int ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado) +
+      (1 | escolaridade_3cat:faixa_etaria),
+  "C. Interação sem pooling" =
+    y_int ~ escolaridade_3cat * faixa_etaria + cor_raca + sexo + (1 | estado)
+)
+
+ajustes_c5 <- imap(formulas_c5, \(f, nome) brm(
+  f, data = amostra, family = bernoulli(), prior = priors_c5,
+  chains = 4, cores = 4, iter = 2000, seed = 2023, backend = "cmdstanr",
+  refresh = 0, silent = 2, control = list(adapt_delta = 0.95),
+  file = here::here("modelos", paste0("c5_", substr(nome, 1, 1))), file_refit = "on_change"
+))
+
+loos_c5 <- map(ajustes_c5, loo)
+comparacao <- as.data.frame(loo_compare(loos_c5))
+if (!"model" %in% names(comparacao)) comparacao$model <- rownames(comparacao)
+
+erros_c5 <- imap_dfr(ajustes_c5, \(f, nome) {
+  resumir_draws(pos_estratificar(f, frame, grupos = "escol_idade", ndraws = 1000)) |>
+    left_join(verdades_int, by = "estimando") |>
+    summarise(modelo = nome,
+              erro_nacional = 100 * (mediana[estimando == "Total"] - verdade[estimando == "Total"]),
+              erro_celulas = 100 * mean(abs(mediana - verdade)[estimando != "Total"]))
+})
+
+tabela_c5 <- erros_c5 |>
+  left_join(transmute(comparacao, modelo = model, elpd_dif = elpd_diff, ep_dif = se_diff),
+            by = "modelo")
+```
+
+```{r}
+#| label: tbl-c5-uma-amostra
+#| tbl-cap: "Três especificações numa amostra opt-in: diferença de elpd do LOO em relação ao melhor modelo (e seu erro-padrão), erro da estimativa nacional e erro absoluto médio nas 18 combinações de escolaridade e idade (pontos percentuais)."
+tabela_c5 |>
+  select(modelo, elpd_dif, ep_dif, erro_nacional, erro_celulas) |>
+  gt() |>
+  fmt_number(c(elpd_dif, ep_dif), decimals = 1, dec_mark = ",") |>
+  fmt_number(c(erro_nacional, erro_celulas), decimals = 2, dec_mark = ",") |>
+  cols_label(modelo = "Modelo", elpd_dif = "Δ elpd", ep_dif = "EP",
+             erro_nacional = "Erro nacional", erro_celulas = "Erro nas células")
+```
+
+```{r}
+#| label: c5-valores-amostra
+#| include: false
+t5 <- function(m, col) tabela_c5[[col]][startsWith(tabela_c5$modelo, m)]
+```
+
+Nesta amostra, o modelo de efeitos principais erra as combinações de escolaridade e idade em `r num(t5("A", "erro_celulas"), 2)` pp em média, contra `r num(t5("B", "erro_celulas"), 2)` pp com a interação com _pooling_ e `r num(t5("C", "erro_celulas"), 2)` pp sem _pooling_. As diferenças de elpd entre os modelos são de `r num(max(abs(tabela_c5$elpd_dif)), 1)` pontos no máximo, com erros-padrão de `r num(min(tabela_c5$ep_dif[tabela_c5$ep_dif > 0]), 1)` a `r num(max(tabela_c5$ep_dif), 1)`: pelo critério individual, os modelos são quase indistinguíveis, embora difiram bastante nas médias das células. O número a olhar, porém, é o do Monte Carlo a seguir, porque numa amostra só o acaso pesa muito.
+
+### Muitas amostras: qual critério escolhe melhor?
+
+O Monte Carlo abaixo ajusta as três especificações com `lme4` em 200 amostras _opt-in_, tanto para o desfecho de interesse, `y_int`, quanto para um segundo desfecho, `y_bench`, que tem a mesma interação entre escolaridade e idade mas efeitos principais diferentes. O `y_bench` faz o papel de um benchmark: uma quantidade que, numa aplicação, se conheceria na população. Em cada amostra, registramos o erro de cada modelo nas células e duas regras de escolha. A primeira escolhe o modelo de menor AIC para `y_int`, uma aproximação do critério individual. A segunda escolhe o modelo de menor erro nas células do benchmark.
+
+```{r}
+#| label: c5-monte-carlo
+formulas_lme4 <- list(
+  A = ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado),
+  B = ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado) +
+    (1 | escolaridade_3cat:faixa_etaria),
+  C = ~ escolaridade_3cat * faixa_etaria + cor_raca + sexo + (1 | estado)
+)
+
+erro_celulas <- function(m, verdades) {
+  frame$pi <- predict(m, frame, type = "response", allow.new.levels = TRUE)
+  est <- frame |> group_by(nivel = escol_idade) |> summarise(est = sum(pi * N) / sum(N)) |>
+    transmute(estimando = paste0("escol_idade: ", nivel), est) |>
+    bind_rows(tibble(estimando = "Total", est = sum(frame$pi * frame$N) / sum(frame$N)))
+  left_join(est, verdades, by = "estimando")
+}
+
+estimar_c5 <- function(r) {
+  a <- amostrar_optin(pop)
+  controle <- glmerControl(optimizer = "bobyqa")
+  ajustar <- function(f, y) suppressMessages(glmer(update(f, as.formula(paste(y, "~ ."))), data = a,
+                                                   family = binomial, control = controle))
+  map_dfr(names(formulas_lme4), \(k) {
+    m_int   <- ajustar(formulas_lme4[[k]], "y_int")
+    m_bench <- ajustar(formulas_lme4[[k]], "y_bench")
+    vc <- as.data.frame(VarCorr(m_int))
+    tau_int <- if (k == "B") vc$sdcor[vc$grp == "escolaridade_3cat:faixa_etaria"] else NA_real_
+    bind_rows(
+      erro_celulas(m_int, verdades_int) |> mutate(desfecho = "y_int", aic = AIC(m_int)),
+      erro_celulas(m_bench, verdades_bench) |> mutate(desfecho = "y_bench", aic = AIC(m_bench))
+    ) |> mutate(modelo = k, tau_int = tau_int)
+  }) |> mutate(replica = r)
+}
+
+mc5 <- com_cache("c5_monte_carlo",
+                 list(mundo$chave, 200, deparse(estimar_c5), deparse(erro_celulas)),
+                 monte_carlo(200, estimar_c5))
+
+por_replica <- mc5 |>
+  filter(estimando != "Total") |>
+  group_by(replica, modelo, desfecho) |>
+  summarise(erro = 100 * mean(abs(est - verdade)), aic = first(aic), .groups = "drop") |>
+  pivot_wider(names_from = desfecho, values_from = c(erro, aic))
+
+escolhas <- por_replica |>
+  group_by(replica) |>
+  summarise(por_aic   = modelo[which.min(aic_y_int)],
+            por_bench = modelo[which.min(erro_y_bench)],
+            erro_aic   = erro_y_int[which.min(aic_y_int)],
+            erro_bench = erro_y_int[which.min(erro_y_bench)],
+            erro_melhor = min(erro_y_int), .groups = "drop")
+```
+
+```{r}
+#| label: tbl-c5-mc
+#| tbl-cap: "As 18 combinações de escolaridade e idade em 200 amostras opt-in (pontos percentuais): viés absoluto médio (média entre células do viés de cada uma) e REQM média de cada especificação, e erro absoluto médio por amostra de cada especificação e das duas regras de escolha."
+vies_celulas <- mc5 |>
+  filter(desfecho == "y_int", estimando != "Total") |>
+  group_by(modelo, estimando) |>
+  summarise(vies = mean(est - verdade), reqm = sqrt(mean((est - verdade)^2)), .groups = "drop") |>
+  group_by(modelo) |>
+  summarise(vies = 100 * mean(abs(vies)), reqm = 100 * mean(reqm), .groups = "drop")
+bind_rows(
+  por_replica |> group_by(modelo) |> summarise(erro = mean(erro_y_int)) |>
+    left_join(vies_celulas, by = "modelo") |>
+    mutate(modelo = recode(modelo, A = "A. Efeitos principais", B = "B. Interação com pooling",
+                           C = "C. Interação sem pooling")),
+  tibble(modelo = c("Escolhido pelo AIC", "Escolhido pelo benchmark", "Melhor em cada amostra"),
+         erro = c(mean(escolhas$erro_aic), mean(escolhas$erro_bench), mean(escolhas$erro_melhor)))
+) |>
+  select(modelo, vies, reqm, erro) |>
+  gt() |>
+  fmt_number(c(vies, reqm, erro), decimals = 2, dec_mark = ",") |>
+  sub_missing(missing_text = "—") |>
+  cols_label(modelo = "", vies = "Viés absoluto", reqm = "REQM", erro = "Erro por amostra")
+```
+
+```{r}
+#| label: c5-valores-mc
+#| include: false
+e5v <- function(m, col = "vies") vies_celulas[[col]][vies_celulas$modelo == m]
+prop_tau_zero <- mc5 |> filter(modelo == "B") |> distinct(replica, tau_int) |>
+  summarise(p = mean(tau_int < 0.01)) |> pull(p)
+tau_bayes <- summary(ajustes_c5[["B. Interação com pooling"]])$random[["escolaridade_3cat:faixa_etaria"]]
+dc <- INTERACAO - outer(rowMeans(INTERACAO), colMeans(INTERACAO), "+") + mean(INTERACAO)
+vies_A <- mc5 |> filter(desfecho == "y_int", modelo == "A", estimando != "Total") |>
+  group_by(estimando) |> summarise(vies = 100 * mean(est - verdade), .groups = "drop") |>
+  slice_max(abs(vies), n = 1)
+freq_aic   <- prop.table(table(factor(escolhas$por_aic, levels = c("A", "B", "C"))))
+freq_bench <- prop.table(table(factor(escolhas$por_bench, levels = c("A", "B", "C"))))
+nac5 <- mc5 |> filter(estimando == "Total", desfecho == "y_int") |>
+  group_by(modelo) |> summarise(vies = 100 * mean(est - verdade), .groups = "drop")
+```
+
+O modelo de efeitos principais deixa um viés absoluto médio de `r num(e5v("A"), 2)` pp nas combinações de escolaridade e idade, que chega a `r num(abs(vies_A$vies), 1)` pp na pior combinação (`r tolower(nome_celula(sub("^escol_idade: ", "", vies_A$estimando)))`); o modelo sem _pooling_ reduz o viés para `r num(e5v("C"), 2)` pp. A REQM, porém, quase não muda (`r num(e5v("A", "reqm"), 2)` e `r num(e5v("C", "reqm"), 2)` pp): com 2 mil respondentes, a variância das estimativas por combinação domina, e o modelo sem _pooling_ troca viés por variância. Na estimativa nacional, o viés é de `r num(nac5$vies[nac5$modelo == "A"], 2)` pp com efeitos principais e `r num(nac5$vies[nac5$modelo == "C"], 2)` pp sem _pooling_.
+
+O modelo com _pooling_ ajustado com `lme4` quase não se distingue do de efeitos principais (`r num(e5v("B"), 2)` pp de viés). O motivo é o do [capítulo 2](02-modelos-multinivel.qmd): em `r pct(prop_tau_zero, 0)` das amostras, a máxima verossimilhança estimou o desvio-padrão da interação praticamente em zero, e o modelo voltou aos efeitos principais. No ajuste bayesiano da primeira seção, com _prior_ meia-normal, o desvio-padrão estimado da interação é `r num(tau_bayes$Estimate, 2)` (intervalo de 95% de `r num(tau_bayes[["l-95% CI"]], 2)` a `r num(tau_bayes[["u-95% CI"]], 2)`), perto do valor verdadeiro do desvio da interação líquido dos efeitos principais, `r num(sd(c(dc)), 2)`.
+
+O AIC escolhe o modelo de efeitos principais em `r pct(freq_aic[["A"]], 0)` das amostras, o com _pooling_ em `r pct(freq_aic[["B"]], 0)` e o sem _pooling_ em `r pct(freq_aic[["C"]], 0)`. O benchmark escolhe essas três especificações em `r pct(freq_bench[["A"]], 0)`, `r pct(freq_bench[["B"]], 0)` e `r pct(freq_bench[["C"]], 0)` das amostras, respectivamente. O modelo escolhido pelo benchmark erra, em média, `r num(mean(escolhas$erro_bench), 2)` pp por amostra nas células de `y_int`, contra `r num(mean(escolhas$erro_aic), 2)` pp do escolhido pelo AIC. A diferença é pequena, pelo mesmo motivo de antes: o erro de cada amostra é dominado pela variância, que nenhuma escolha de modelo reduz muito. O benchmark ajuda porque compartilha com o desfecho a estrutura que importa (a interação), e não porque os dois desfechos sejam parecidos: seus efeitos principais são diferentes.
+
+### Cobertura com o modelo errado
+
+O [capítulo 4](04-mrp-bayesiano.qmd) mostrou que, com o modelo certo, os intervalos bayesianos têm cobertura perto da nominal. O Monte Carlo abaixo repete aquele exercício para `y_int` com as especificações (A) e (B), em 100 amostras, e mede a cobertura dos intervalos de 90% nas células.
+
+```{r}
+#| label: c5-cobertura
+# o ajuste lido do arquivo nao guarda o modelo compilado: o molde compila uma vez
+compilar_molde <- function(f) {
+  update(f, recompile = TRUE, chains = 1, iter = 20, refresh = 0, silent = 2, seed = 1)
+}
+
+estimar_cob_c5 <- function(r, moldes) {
+  a <- amostrar_optin(pop)
+  map_dfr(names(moldes), \(nome) {
+    f <- update(moldes[[nome]], newdata = a, recompile = FALSE, chains = 4, cores = 4,
+                iter = 1000, seed = r, refresh = 0, silent = 2,
+                control = list(adapt_delta = 0.95))
+    resumir_draws(pos_estratificar(f, frame, grupos = "escol_idade", ndraws = 1000)) |>
+      select(estimando, lo = q05, hi = q95) |>
+      mutate(modelo = nome)
+  }) |> mutate(replica = r)
+}
+
+mc5_cob <- com_cache("c5_cobertura",
+                     list(mundo$chave, 100, deparse(estimar_cob_c5), deparse(pos_estratificar)),
+                     {
+                       moldes <- map(ajustes_c5[c("A. Efeitos principais",
+                                                  "B. Interação com pooling")], compilar_molde)
+                       monte_carlo(100, \(r) estimar_cob_c5(r, moldes), cores = 1)
+                     })
+
+cobertura_c5 <- mc5_cob |>
+  left_join(verdades_int, by = "estimando") |>
+  group_by(modelo, estimando) |>
+  summarise(cobertura = mean(verdade >= lo & verdade <= hi), .groups = "drop")
+```
+
+```{r}
+#| label: fig-c5-cobertura
+#| fig-cap: "Cobertura dos intervalos de 90% em 100 amostras opt-in, por combinação de escolaridade e idade e para o total nacional, com o modelo de efeitos principais (que omite a interação) e com a interação com pooling. A faixa cinza mostra a variação esperada por acaso quando a cobertura verdadeira é 90%."
+#| fig-width: 7
+#| fig-height: 5.5
+faixa <- 1.96 * sqrt(0.9 * 0.1 / 100)
+ordem_celulas <- c("Nacional", nome_celula(sort(unique(pop$escol_idade))))
+cobertura_c5 |>
+  mutate(rotulo = if_else(estimando == "Total", "Nacional",
+                          nome_celula(sub("^escol_idade: ", "", estimando))),
+         rotulo = factor(rotulo, levels = rev(ordem_celulas))) |>
+  ggplot(aes(x = cobertura, y = rotulo, shape = modelo, colour = modelo)) +
+  annotate("rect", xmin = 0.9 - faixa, xmax = 0.9 + faixa, ymin = -Inf, ymax = Inf,
+           fill = cn_palette$line, alpha = 0.7) +
+  geom_vline(xintercept = 0.9, linetype = "dashed", colour = cn_palette$ink3) +
+  geom_point(size = 2.2) +
+  scale_colour_notes() +
+  scale_x_continuous(labels = rotulo_pct, limits = c(0, 1)) +
+  labs(x = "Cobertura do intervalo de 90%", y = NULL, colour = NULL, shape = NULL)
+```
+
+```{r}
+#| label: c5-valores-cob
+#| include: false
+cob5 <- cobertura_c5 |> filter(estimando != "Total") |>
+  group_by(modelo) |> summarise(media = mean(cobertura), minimo = min(cobertura), .groups = "drop")
+c5v <- function(m, col) cob5[[col]][startsWith(cob5$modelo, m)]
+```
+
+Com o modelo de efeitos principais, a cobertura média nas células é de `r pct(c5v("A", "media"), 0)`, e na pior célula cai para `r pct(c5v("A", "minimo"), 0)`. Os intervalos continuam estreitos, porque o modelo está seguro de uma estrutura errada. Com a interação com _pooling_ estimada de forma bayesiana, que não cai na fronteira $\hat{\tau}_\gamma = 0$, a cobertura média sobe para `r pct(c5v("B", "media"), 0)`, com mínimo de `r pct(c5v("B", "minimo"), 0)`. A incerteza bayesiana é condicional ao modelo: ela não inclui o erro de especificação, e só um modelo que admita a estrutura verdadeira produz intervalos calibrados nos subgrupos que essa estrutura afeta.
+
+## Explorar os resultados
+
+O painel mostra o erro médio do Monte Carlo de `lme4` em cada combinação de escolaridade e idade, para as três especificações.
+
+```{r}
+#| label: c5-ojs-dados
+#| include: false
+ojs_define(celulas_c5 = mc5 |>
+             filter(desfecho == "y_int", estimando != "Total") |>
+             group_by(modelo, estimando) |>
+             summarise(vies = 100 * mean(est - verdade), .groups = "drop") |>
+             mutate(escolaridade = sub("^escol_idade: (.*) × .*$", "\\1", estimando),
+                    faixa = unname(nome_faixa[sub("^.* × ", "", estimando)]),
+                    modelo = recode(modelo, A = "A. Efeitos principais",
+                                    B = "B. Interação com pooling",
+                                    C = "C. Interação sem pooling")) |>
+             select(modelo, escolaridade, faixa, vies))
+```
+
+::: {.panel-tabset}
+
+### Interativo
+
+```{ojs}
+//| echo: false
+import {scheme, palette, plotStyle, fmt} from "/_extensions/felipelmc/course-notes/ojs/notes.js"
+mode = scheme()
+pal = palette(mode)
+```
+
+::: cn-sim
+
+```{ojs}
+//| echo: false
+celulas = transpose(celulas_c5)
+viewof escolaridade = Inputs.radio(["Ensino Fundamental", "Ensino Médio", "Ensino Superior"],
+                                   {value: "Ensino Superior", label: "Escolaridade"})
+```
+
+```{ojs}
+//| echo: false
+modelos = ["A. Efeitos principais", "B. Interação com pooling", "C. Interação sem pooling"]
+Plot.plot({
+  width, height: 320, style: plotStyle, marginLeft: 90,
+  x: {label: "Viés médio (pontos percentuais) →", tickFormat: (d) => fmt(d, 1)},
+  y: {domain: modelos, axis: null},
+  fy: {domain: ["16 a 24", "25 a 34", "35 a 44", "45 a 54", "55 a 64", "65 ou mais"],
+       label: null, axis: "left"},
+  color: {domain: modelos, range: [pal.ink3, pal.accent, pal.ramp[1]], legend: true},
+  marks: [
+    Plot.ruleX([0], {stroke: pal.ink3, strokeDasharray: "4,3"}),
+    Plot.dot(celulas.filter((d) => d.escolaridade === escolaridade),
+             {x: "vies", y: "modelo", fy: "faixa", fill: "modelo", r: 5})
+  ]
+})
+```
+
+:::
+
+### Em R
+
+```{r}
+#| eval: false
+mc5 |>
+  filter(desfecho == "y_int", estimando != "Total") |>
+  group_by(modelo, estimando) |>
+  summarise(vies = 100 * mean(est - verdade), reqm = 100 * sqrt(mean((est - verdade)^2))) |>
+  filter(grepl("Superior", estimando))
+```
+
+:::
+
+## Armadilhas
+
+- Critérios individuais não medem o que o MrP estima. A validação cruzada e o AIC pesam os respondentes pela sua participação na amostra e somam a qualidade de predições individuais; diferenças importantes nas médias de subgrupos podem ficar escondidas no ruído das respostas binárias.
+- Um benchmark só serve se for independente do _frame_ e do modelo, e se tiver a estrutura que se quer testar. Uma variável usada na pós-estratificação ou como preditor não informa nada como benchmark.
+- Escolher o modelo olhando para o desfecho de interesse é um caminho para o sobreajuste. A especificação e a regra de escolha devem ser fixadas antes, com base em benchmarks e em conhecimento substantivo.
+- Interações sem _pooling_ custam variância nas combinações escassas e podem gerar estimativas extremas; interações com _pooling_ só ajudam se $\tau_\gamma$ não for estimado em zero. Com poucas combinações, a máxima verossimilhança cai com frequência na fronteira, e a estimação bayesiana com um _prior_ para $\tau_\gamma$ evita o problema.
+- A cobertura nominal dos intervalos pressupõe o modelo certo. Um modelo mal especificado produz intervalos estreitos em torno de valores errados, sobretudo nos subgrupos.
+
+## Leituras
+
+@ghitza2013deep introduzem as interações com _partial pooling_ no MrP. @gao2021improving mostram as vantagens de _priors_ estruturados para variáveis ordenadas. @kuh2024leaveoneout discutem por que a validação cruzada individual pode enganar na escolha de modelos para MrP, e @kennedy2023model propõem critérios de validação para estimativas agregadas. @goplerud2024reevaluating mostra que modelos hierárquicos com interações bem especificadas têm desempenho comparável ao de métodos de aprendizado de máquina. @buttice2013multilevel lembram que o desempenho do MrP varia entre aplicações, o que reforça a necessidade de validar em cada uma.

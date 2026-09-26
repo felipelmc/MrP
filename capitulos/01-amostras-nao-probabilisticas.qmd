@@ -1,0 +1,414 @@
+---
+title: "Inferência com amostras não probabilísticas"
+description: "Por que a média de uma amostra autosselecionada erra, as condições para corrigi-la, a pós-estratificação e o raking."
+eyebrow: "Capítulo 01"
+---
+
+{{< include _aviso-ia.qmd >}}
+
+```{r}
+#| label: c1-setup
+#| include: false
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+source(here::here("R/mundo.R"))
+source(here::here("R/utils.R"))
+suppressMessages({
+  library(tidyverse)
+  library(survey)
+  library(gt)
+  library(ggdist)
+})
+theme_set(theme_notes())
+mundo <- carregar_mundo()
+pop   <- mundo$pop
+```
+
+## Intuição
+
+Uma pesquisa de opinião quer saber algo sobre uma população, como a proporção de brasileiros com 16 anos ou mais que têm certa atitude. Numa amostra probabilística, cada pessoa da população tem uma probabilidade conhecida e positiva de ser sorteada. Pesando cada respondente pelo inverso dessa probabilidade (numa amostra aleatória simples, em que todos têm a mesma probabilidade, basta a média simples), a estimativa acerta em média; o erro que sobra é aleatório e diminui com o tamanho da amostra.
+
+Num painel _online_, ninguém sorteia os respondentes. Entra na amostra quem se cadastrou no painel e aceitou responder. Se as pessoas que participam diferem das que não participam naquilo que se quer medir, a média da amostra erra de forma sistemática, e esse erro não diminui com mais entrevistas. Por exemplo, se o painel tem mais pessoas com ensino superior e a escolaridade está associada à atitude, a média da amostra sai deslocada.
+
+Todo método de correção (ponderação, pós-estratificação, MrP) faz a mesma aposta: dentro de grupos definidos por variáveis observadas, como escolaridade e idade, quem responde se parece com quem não responde. Se a aposta vale e se conhecemos o tamanho de cada grupo na população, é possível reconstruir a média populacional a partir das médias dos grupos. Este capítulo formaliza essa aposta e apresenta as duas correções clássicas, a pós-estratificação por células e o _raking_.
+
+## Formalização
+
+### O estimando e o erro da média amostral
+
+::: {#def-estimando}
+## Estimando
+Numa população finita $U = \{1, \dots, N\}$, com um desfecho $Y_i$ para cada pessoa, o estimando é a média populacional
+$$
+\theta = \bar{Y} = \frac{1}{N} \sum_{i=1}^{N} Y_i .
+$$
+:::
+
+Seja $R_i = 1$ se a pessoa $i$ está na amostra e $R_i = 0$ caso contrário, com $n = \sum_i R_i$ e fração amostral $f = n / N$. A média amostral é $\bar{y}_R = \sum_i R_i Y_i / n$. @meng2018statistical mostra que o erro dessa média admite uma decomposição exata.
+
+::: {#thm-meng}
+## Decomposição do erro
+Para qualquer população finita e qualquer conjunto de respondentes,
+$$
+\boxed{\bar{y}_R - \bar{Y} \;=\; \underbrace{\rho_{R,Y}}_{\text{qualidade}} \times \underbrace{\sqrt{\frac{1-f}{f}}}_{\text{quantidade}} \times \underbrace{\sigma_Y}_{\text{dificuldade}}}
+$$
+onde $\rho_{R,Y}$ é a correlação, calculada sobre a população, entre o indicador de inclusão e o desfecho, e $\sigma_Y$ é o desvio-padrão populacional de $Y$ (com denominador $N$).
+:::
+
+::: prova
+Como $\bar{R} = f$, o erro é $\bar{y}_R - \bar{Y} = \frac{1}{N}\sum_i R_i Y_i / f - \bar{Y} = \text{Cov}_U(R, Y) / f$. O desvio-padrão de uma variável binária com média $f$ é $\sqrt{f(1-f)}$, então $\text{Cov}_U(R, Y) = \rho_{R,Y}\sqrt{f(1-f)}\,\sigma_Y$. Dividindo por $f$, obtém-se o resultado.
+:::
+
+Numa amostra aleatória simples, $R$ é independente de $Y$ por construção, e $\rho_{R,Y}$ tem média zero e magnitude da ordem de $1/\sqrt{N}$; multiplicada por $\sqrt{(1-f)/f} \approx \sqrt{N/n}$, ela dá um erro da ordem de $\sigma_Y/\sqrt{n}$, que cai com o tamanho da amostra. Numa amostra autosselecionada, a correlação não é zero em média, e seu tamanho depende do mecanismo de seleção. Sob um mecanismo fixo (cada pessoa com a mesma propensão relativa de participar, seja qual for o tamanho da amostra), $\rho_{R,Y}$ cresce na proporção de $\sqrt{f}$, e o produto $\rho_{R,Y}\sqrt{(1-f)/f}$ praticamente não muda com $n$. Uma correlação que parece desprezível, multiplicada por $\sqrt{(1-f)/f}$, que é grande quando a amostra é uma fração pequena da população, produz erros de vários pontos percentuais. Por isso, numa amostra não probabilística, aumentar $n$ reduz a variância, mas não o viés.
+
+### Três condições para corrigir o viés
+
+Seja $X_i$ um vetor de variáveis observadas tanto na amostra quanto na população, como sexo, idade e escolaridade. @mercer2017theory organizam em três grupos as condições para que a correção funcione, em paralelo com a inferência causal. Nelas, $\Pr$ e $\mathbb{E}$ se referem a uma pessoa sorteada ao acaso da população $U$ e ao mecanismo que decide quem participa.
+
+::: {#def-ignorabilidade}
+## Ignorabilidade condicional
+Dentro de cada valor de $X$, a inclusão na amostra é independente do desfecho: $Y \perp\!\!\!\perp R \mid X$. Em particular, $\mathbb{E}[Y \mid X = x, R = 1] = \mathbb{E}[Y \mid X = x]$: os respondentes de cada grupo são representativos do grupo.
+:::
+
+::: {#def-positividade}
+## Positividade
+Toda combinação de $X$ presente na população tem probabilidade positiva de aparecer na amostra: $\Pr(R = 1 \mid X = x) > 0$.
+:::
+
+::: {#def-composicao}
+## Composição
+A distribuição populacional de $X$ é conhecida (é o _frame_ de pós-estratificação), e $X$ é medido da mesma forma na amostra e na fonte populacional.
+:::
+
+::: {#thm-identificacao}
+## Identificação
+Sob a @def-ignorabilidade, a @def-positividade e a @def-composicao,
+$$
+\theta = \sum_{x} \Pr(X = x)\, \mathbb{E}[Y \mid X = x, R = 1] .
+$$
+:::
+
+::: prova
+Pela lei das expectativas iteradas, $\theta = \sum_x \Pr(X = x)\, \mathbb{E}[Y \mid X = x]$. A positividade garante que $\mathbb{E}[Y \mid X = x, R = 1]$ está definida para todo $x$ com $\Pr(X = x) > 0$, e a ignorabilidade garante que ela é igual a $\mathbb{E}[Y \mid X = x]$. A composição garante que $\Pr(X = x)$ é conhecida.
+:::
+
+O primeiro termo, $\Pr(X = x)$, vem do _frame_; o segundo, $\mathbb{E}[Y \mid X = x, R = 1]$, vem da amostra. A ignorabilidade é a condição decisiva e não pode ser testada com os dados da amostra, porque ela diz respeito a quem não respondeu.
+
+### Pós-estratificação por células
+
+A versão mais direta do @thm-identificacao divide a população em $J$ células, as combinações de categorias de $X$. Com $N_j$ pessoas na célula $j$ na população e $n_j$ respondentes com média $\bar{y}_j$, o estimador de pós-estratificação é
+
+$$
+\hat{\theta}_{PS} = \sum_{j=1}^{J} \frac{N_j}{N}\, \bar{y}_j .
+$$
+
+Ele equivale a uma média ponderada dos respondentes, com peso $w_i = (N_j / N) / (n_j / n)$ para quem está na célula $j$: grupos sub-representados recebem peso maior que 1, e grupos sobre-representados, menor. Se os respondentes de cada célula forem uma amostra aleatória simples da célula (uma hipótese mais forte que a ignorabilidade) e todas as células tiverem respondentes, a variância condicional aos tamanhos $n_j$ é [@holt1979poststratification]
+
+$$
+\mathbb{V}(\hat{\theta}_{PS}) = \sum_{j=1}^{J} \left(\frac{N_j}{N}\right)^2 \left(1 - \frac{n_j}{N_j}\right) \frac{S_j^2}{n_j},
+$$
+
+onde $S_j^2$ é a variância de $Y$ na célula. O problema aparece quando o número de células cresce. Um _frame_ que cruze 27 UFs, 2 sexos, 6 faixas etárias, 3 níveis de escolaridade e 4 grupos de cor/raça tem 3.888 células, para uma amostra típica de cerca de 2 mil respondentes. A maior parte das células fica vazia, e $\bar{y}_j$ não pode ser calculado; as que têm poucos respondentes produzem pesos extremos e estimativas instáveis. A saída clássica é agrupar células, mas cada agrupamento reintroduz viés se, dentro do grupo maior, a composição da amostra difere da população em alguma variável associada ao desfecho.
+
+Os pesos também custam precisão. @kish1965survey resume esse custo no tamanho efetivo de amostra,
+
+$$
+n_{\text{ef}} = \frac{\left(\sum_i w_i\right)^2}{\sum_i w_i^2} = \frac{n}{1 + \text{CV}_w^2},
+$$
+
+onde $\text{CV}_w$ é o coeficiente de variação dos pesos. Pesos muito desiguais fazem uma amostra de 2 mil pessoas render a precisão de uma amostra bem menor.
+
+### _Raking_
+
+Quando só se conhecem as distribuições marginais de cada variável, e não o cruzamento completo, usa-se o _raking_, ou ajuste proporcional iterativo [@deming1940least]. O algoritmo parte de pesos iguais e percorre as variáveis em ciclos: para cada variável $m$ e categoria $\ell$, multiplica os pesos das pessoas nessa categoria por $T_{m\ell} / \sum_{i:\, x_{im} = \ell} w_i$, onde $T_{m\ell}$ é o total populacional da categoria. Cada passo acerta uma margem e desacerta ligeiramente as outras; os ciclos se repetem até que todas as margens batam.
+
+O _raking_ aproveita mais variáveis do que a pós-estratificação por células sem esvaziar células, mas tem um custo: ele corrige apenas as margens. Se a seleção depende de uma combinação de variáveis (por exemplo, se o painel tem mais jovens com ensino superior do que o produto das margens indicaria), a distribuição conjunta ponderada continua errada. Uma condição suficiente para que o _raking_ não tenha viés é que a média do desfecho seja aditiva, na escala de probabilidade, nas variáveis usadas (ou que a seleção dependa só dos efeitos principais dessas variáveis, na escala log).
+
+## Em R
+
+### Uma amostra do painel
+
+Começamos com uma amostra de 2 mil pessoas tirada com a seleção do painel. A @tbl-c1-composicao compara sua composição com a da população.
+
+```{r}
+#| label: tbl-c1-composicao
+#| tbl-cap: "Composição da população sintética e de uma amostra _opt-in_."
+set.seed(42)
+amostra <- amostrar_optin(pop, n = 2000)
+
+composicao <- function(var) {
+  bind_rows(
+    População = count(pop, nivel = .data[[var]]),
+    Amostra   = count(amostra, nivel = .data[[var]]),
+    .id = "fonte"
+  ) |>
+    group_by(fonte) |>
+    mutate(p = n / sum(n)) |>
+    select(-n) |>
+    pivot_wider(names_from = fonte, values_from = p) |>
+    mutate(variavel = c(escolaridade_3cat = "Escolaridade", faixa_etaria = "Faixa etária",
+                        cor_raca = "Cor/raça")[var],
+           nivel = recode(as.character(nivel), "16_24" = "16 a 24", "25_34" = "25 a 34",
+                          "35_44" = "35 a 44", "45_54" = "45 a 54",
+                          "55_64" = "55 a 64", "65_+" = "65 ou mais"))
+}
+
+map_dfr(c("escolaridade_3cat", "faixa_etaria", "cor_raca"), composicao) |>
+  gt(groupname_col = "variavel") |>
+  fmt_percent(c(População, Amostra), decimals = 1, dec_mark = ",") |>
+  cols_label(nivel = "")
+```
+
+A atitude é compartilhada por `r pct(mundo$verdade)` da população e por `r pct(mean(amostra$y))` da amostra. Podemos conferir a decomposição do @thm-meng com os dados:
+
+```{r}
+#| label: c1-meng
+R_i     <- as.integer(pop$id %in% amostra$id)
+f       <- mean(R_i)
+rho     <- cor(R_i, pop$y)
+sigma_y <- sqrt(mean((pop$y - mean(pop$y))^2))
+
+c(erro_observado = mean(amostra$y) - mean(pop$y),
+  decomposicao   = rho * sqrt((1 - f) / f) * sigma_y,
+  rho            = rho)
+```
+
+A correlação entre inclusão e desfecho é pequena, `r num(rho, 4)`, mas, multiplicada por $\sqrt{(1-f)/f} \approx$ `r num(sqrt((1 - f) / f))` e por $\sigma_Y \approx$ `r num(sigma_y, 2)`, ela produz um erro de `r num(100 * (mean(amostra$y) - mean(pop$y)))` pontos percentuais.
+
+### Células vazias
+
+Antes de corrigir, vale ver quanto do _frame_ completo a amostra cobre.
+
+```{r}
+#| label: c1-celulas
+celulas_pop     <- frame_populacao(pop)
+celulas_amostra <- count(amostra, across(all_of(VARS_FRAME)), name = "n")
+
+cobertura <- celulas_pop |>
+  left_join(celulas_amostra, by = VARS_FRAME) |>
+  mutate(vazia = is.na(n))
+
+c(celulas_na_populacao  = nrow(cobertura),
+  celulas_com_dados     = sum(!cobertura$vazia),
+  pop_em_celulas_vazias = sum(cobertura$N[cobertura$vazia]) / sum(cobertura$N))
+```
+
+Das `r inteiro(nrow(cobertura))` células com pessoas na população, só `r inteiro(sum(!cobertura$vazia))` têm algum respondente, e `r pct(sum(cobertura$N[cobertura$vazia]) / sum(cobertura$N), 0)` da população está em células sem nenhum. A pós-estratificação pelo cruzamento completo é impossível; é preciso agrupar ou usar só as margens.
+
+### Pós-estratificação agrupada e _raking_
+
+O pacote `survey` [@lumley2004analysis] implementa as duas correções. A pós-estratificação usa aqui o cruzamento de escolaridade e faixa etária (18 células); o _raking_ usa as cinco margens do _frame_.
+
+```{r}
+#| label: c1-correcoes
+desenho <- svydesign(ids = ~1, data = amostra)
+
+# pos-estratificacao por escolaridade x faixa etaria
+totais_escol_idade <- count(pop, escolaridade_3cat, faixa_etaria, name = "Freq")
+ps <- postStratify(desenho, ~ escolaridade_3cat + faixa_etaria, totais_escol_idade)
+
+# raking nas cinco margens
+margens  <- map(VARS_FRAME, \(v) count(pop, across(all_of(v)), name = "Freq"))
+formulas <- map(VARS_FRAME, reformulate)
+rk <- rake(desenho, sample.margins = formulas, population.margins = margens,
+           control = list(maxit = 50))
+
+tibble(
+  metodo     = c("Média bruta", "Pós-estratificação (escolaridade × idade)",
+                 "Raking (5 margens)"),
+  estimativa = c(mean(amostra$y), coef(svymean(~y, ps)), coef(svymean(~y, rk))),
+  erro_pp    = 100 * (estimativa - mundo$verdade)
+)
+```
+
+O custo em precisão dos pesos do _raking_ aparece no tamanho efetivo de amostra:
+
+```{r}
+#| label: c1-kish
+w    <- weights(rk)
+n_ef <- sum(w)^2 / sum(w^2)
+c(n = length(w), n_efetivo = n_ef)
+```
+
+Com os pesos do _raking_, as 2 mil respostas valem tanto quanto `r inteiro(n_ef)` respostas de uma amostra aleatória simples (`r pct(n_ef / length(w), 0)` do total).
+
+### Muitas amostras
+
+Uma amostra só não diz se um método acerta em média. O Monte Carlo abaixo repete o procedimento em 500 amostras _opt-in_ e acrescenta, como referência, a média de uma amostra aleatória simples do mesmo tamanho. Para cada método, guardamos a estimativa e o erro-padrão.
+
+```{r}
+#| label: c1-monte-carlo
+estimar_c1 <- function(r) {
+  a  <- amostrar_optin(pop)
+  d  <- svydesign(ids = ~1, data = a)
+  ps <- postStratify(d, ~ escolaridade_3cat + faixa_etaria, totais_escol_idade)
+  # o raking falha se alguma UF ficar sem respondentes
+  rk <- tryCatch(rake(d, formulas, margens, control = list(maxit = 50)),
+                 error = function(e) NULL)
+  aas <- amostrar_aas(pop)
+  tibble(
+    metodo = c("Média bruta (AAS)", "Média bruta (opt-in)",
+               "Pós-estratificação (escolaridade × idade)",
+               "Raking (5 margens)"),
+    est = c(mean(aas$y), mean(a$y), coef(svymean(~y, ps)),
+            if (is.null(rk)) NA else coef(svymean(~y, rk))),
+    ep  = c(sd(aas$y) / sqrt(nrow(aas)), sd(a$y) / sqrt(nrow(a)),
+            SE(svymean(~y, ps)),
+            if (is.null(rk)) NA else SE(svymean(~y, rk)))
+  )
+}
+
+mc1 <- com_cache("c1_monte_carlo", list(mundo$chave, 500, deparse(estimar_c1)),
+                 monte_carlo(500, estimar_c1))
+
+resumo_mc <- function(mc, verdade) {
+  mc |>
+    group_by(metodo) |>
+    summarise(
+      replicas  = sum(!is.na(est)),
+      vies_pp   = 100 * mean(est - verdade, na.rm = TRUE),
+      dp_pp     = 100 * sd(est, na.rm = TRUE),
+      reqm_pp   = 100 * sqrt(mean((est - verdade)^2, na.rm = TRUE)),
+      cobertura = mean(abs(est - verdade) <= 1.96 * ep, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    mutate(ep_mc_pp = dp_pp / sqrt(replicas), .after = vies_pp)
+}
+
+tab_mc1 <- resumo_mc(mc1, mundo$verdade)
+```
+
+```{r}
+#| label: tbl-c1-mc
+#| tbl-cap: "Desempenho em 500 amostras: viés, erro de Monte Carlo do viés (EP MC), desvio-padrão e raiz do erro quadrático médio (REQM), em pontos percentuais, e cobertura do intervalo de 95%."
+tab_mc1 |>
+  gt() |>
+  fmt_number(c(vies_pp, ep_mc_pp, dp_pp, reqm_pp), decimals = 2, dec_mark = ",") |>
+  fmt_percent(cobertura, decimals = 1, dec_mark = ",") |>
+  cols_label(metodo = "Método", replicas = "Réplicas", vies_pp = "Viés",
+             ep_mc_pp = "EP MC", dp_pp = "DP", reqm_pp = "REQM",
+             cobertura = "Cobertura 95%")
+```
+
+```{r}
+#| label: fig-c1-mc
+#| fig-cap: "Distribuição do erro (estimativa menos verdade) em 500 amostras, por método. A linha tracejada marca erro zero."
+#| fig-width: 7
+#| fig-height: 3.5
+mc1 |>
+  filter(!is.na(est)) |>
+  mutate(erro = 100 * (est - mundo$verdade),
+         metodo = fct_rev(factor(metodo, levels = tab_mc1$metodo))) |>
+  ggplot(aes(x = erro, y = metodo)) +
+  stat_halfeye(fill = cn_palette$ramp[1], .width = c(0.5, 0.95)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = cn_palette$ink3) +
+  scale_x_continuous(labels = rotulo_num) +
+  labs(x = "Erro (pontos percentuais)", y = NULL)
+```
+
+```{r}
+#| label: c1-valores
+#| include: false
+v1 <- function(metodo, coluna) tab_mc1[[coluna]][tab_mc1$metodo == metodo]
+```
+
+A @tbl-c1-mc e a @fig-c1-mc mostram três resultados. Primeiro, a média da amostra _opt-in_ erra em média `r num(v1("Média bruta (opt-in)", "vies_pp"))` pp, e o intervalo de 95% calculado como se a amostra fosse aleatória contém a verdade em apenas `r pct(v1("Média bruta (opt-in)", "cobertura"), 1)` das amostras. A amostra aleatória simples do mesmo tamanho não tem viés e cobre a verdade na proporção nominal; a diferença entre as duas linhas é o efeito da seleção.
+
+Segundo, as correções removem quase todo o viés: a pós-estratificação por escolaridade × idade fica com `r num(v1("Pós-estratificação (escolaridade × idade)", "vies_pp"), 2)` pp, e o _raking_ nas cinco margens, com `r num(v1("Raking (5 margens)", "vies_pp"), 2)` pp. O que sobra é da ordem de décimos de ponto, perto do erro de Monte Carlo da coluna "EP MC". O _raking_ tem uma razão estrutural para errar um pouco: ele corrige as cinco margens, mas não a combinação de escolaridade e idade que a seleção do painel distorce, e, como os efeitos do mundo sintético se somam na escala logit, e não na de probabilidade, essa combinação ainda afeta a média nacional. Nesse mundo, o efeito na estimativa nacional é pequeno; o [capítulo 3](03-estimador-mrp.qmd) mostra que ele é muito maior nas estimativas por subgrupo.
+
+Terceiro, a correção custa precisão: o desvio-padrão das estimativas corrigidas é maior que o da média bruta, reflexo do tamanho efetivo menor. Em `r 500 - v1("Raking (5 margens)", "replicas")` das 500 amostras o _raking_ falhou porque alguma UF pequena ficou sem respondentes, por acaso. Isso não viola a positividade (todas as UFs têm probabilidade positiva de aparecer), mas mostra o problema prático da esparsidade: uma categoria sem respondentes não pode ser corrigida por pesos.
+
+## Simulação
+
+Pelo @thm-meng, com um mecanismo de seleção fixo, o viés de uma amostra autosselecionada não depende de $n$: $\rho_{R,Y}$ cresce com $\sqrt{f}$ e compensa o fator $\sqrt{(1-f)/f}$. A simulação abaixo usa um desfecho binário numa população de 164 milhões de pessoas (o tamanho da população brasileira com 16 anos ou mais). As pessoas com $y = 1$ têm uma propensão de participar $k$ vezes maior que as demais. A faixa mostra o intervalo de 95% aproximado das estimativas: numa amostra aleatória simples ela se estreita em torno da verdade; numa amostra autosselecionada, em torno de um valor errado. Os valores são esperados, calculados a partir das probabilidades de inclusão.
+
+::: {.panel-tabset}
+
+### Interativo
+
+```{ojs}
+//| echo: false
+import {scheme, palette, plotStyle, fmt} from "/_extensions/felipelmc/course-notes/ojs/notes.js"
+mode = scheme()
+pal = palette(mode)
+```
+
+::: cn-sim
+
+```{ojs}
+//| echo: false
+viewof p = Inputs.range([0.2, 0.8], {value: 0.6, step: 0.01, label: "Proporção na população"})
+viewof k = Inputs.range([1, 2], {value: 1.3, step: 0.01, label: "Propensão relativa (y = 1)"})
+```
+
+```{ojs}
+//| echo: false
+N = 164e6
+grade = d3.range(0, 41).map((i) => Math.round(10 ** (2 + i * 0.075)))
+mu = (p * k) / (p * k + 1 - p)
+faixa = (centro, n) => 1.96 * Math.sqrt(centro * (1 - centro) / n)
+linhas = grade.flatMap((n) => [
+  {n, tipo: "Amostra aleatória simples", centro: p, lo: p - faixa(p, n), hi: p + faixa(p, n)},
+  {n, tipo: "Amostra autosselecionada", centro: mu, lo: mu - faixa(mu, n), hi: mu + faixa(mu, n)}
+])
+```
+
+```{ojs}
+//| echo: false
+Plot.plot({
+  width, height: 340, style: plotStyle, marginLeft: 50,
+  x: {type: "log", label: "Tamanho da amostra (n) →"},
+  y: {label: "↑ Estimativa", tickFormat: (d) => fmt(100 * d, 0) + "%"},
+  color: {domain: ["Amostra aleatória simples", "Amostra autosselecionada"],
+          range: [pal.ink3, pal.accent], legend: true},
+  marks: [
+    Plot.areaY(linhas, {x: "n", y1: "lo", y2: "hi", fill: "tipo", fillOpacity: 0.18}),
+    Plot.lineY(linhas, {x: "n", y: "centro", stroke: "tipo", strokeWidth: 2}),
+    Plot.ruleY([p], {stroke: pal.ink, strokeDasharray: "4,3"})
+  ]
+})
+```
+
+```{ojs}
+//| echo: false
+n0 = 2000
+f0 = n0 / N
+pi0 = f0 / (p * k + 1 - p)
+rho = Math.sqrt(p * (1 - p)) * (k * pi0 - pi0) / Math.sqrt(f0 * (1 - f0))
+html`<p class="cn-readout">Com n = 2.000: ρ = <b>${fmt(rho, 5)}</b> · √((1 − f)/f) = <b>${fmt(Math.sqrt((1 - f0) / f0), 0)}</b> · σ = <b>${fmt(Math.sqrt(p * (1 - p)), 2)}</b> · viés = <b>${fmt(100 * (mu - p), 1)} pp</b></p>`
+```
+
+:::
+
+### Em R
+
+```{r}
+#| eval: false
+N <- 164e6; p <- 0.6; k <- 1.3
+mu <- p * k / (p * k + 1 - p)                # media esperada da amostra autosselecionada
+n  <- c(100, 1000, 10000, 100000)
+data.frame(n,
+           aas_lo = p - 1.96 * sqrt(p * (1 - p) / n),
+           aas_hi = p + 1.96 * sqrt(p * (1 - p) / n),
+           auto_lo = mu - 1.96 * sqrt(mu * (1 - mu) / n),
+           auto_hi = mu + 1.96 * sqrt(mu * (1 - mu) / n))
+
+# decomposicao de Meng para n = 2000
+f   <- 2000 / N
+pi0 <- f / (p * k + 1 - p)
+rho <- sqrt(p * (1 - p)) * (k * pi0 - pi0) / sqrt(f * (1 - f))
+c(rho = rho, quantidade = sqrt((1 - f) / f), dificuldade = sqrt(p * (1 - p)))
+rho * sqrt((1 - f) / f) * sqrt(p * (1 - p))  # igual a mu - p
+```
+
+:::
+
+## Armadilhas
+
+- A ignorabilidade não se verifica na amostra: nenhum diagnóstico com os dados dos respondentes mostra se, dentro das células, eles se parecem com os não respondentes. O que se pode fazer é incluir no _frame_ as variáveis que mais provavelmente afetam ao mesmo tempo a participação e o desfecho, e testar a correção contra quantidades populacionais conhecidas.
+- Tamanho de amostra não compensa seleção. Pelo @thm-meng, com um mecanismo de seleção fixo, dobrar $n$ numa amostra autosselecionada quase não muda o viés, e intervalos calculados como se a amostra fosse aleatória ficam estreitos em torno de um valor errado.
+- O _frame_ precisa medir as variáveis como o _survey_. Se a escolaridade do _frame_ é classificada por um critério diferente do usado no questionário (curso frequentado num, nível concluído no outro, por exemplo), a correção empurra a amostra para uma composição errada.
+- Pesos extremos: células pequenas geram pesos muito grandes, que dominam a estimativa. Aparar os pesos reduz a variância ao custo de reintroduzir viés.
+
+## Leituras
+
+@meng2018statistical apresenta a decomposição do erro e suas consequências para grandes bases de dados não probabilísticas. @mercer2017theory fazem o paralelo entre inferência com amostras não probabilísticas e inferência causal. @elliott2017inference revisam os métodos de estimação com amostras não probabilísticas, incluindo ponderação por quase-aleatorização e abordagens baseadas em modelo. O artigo de @holt1979poststratification é a referência clássica sobre a pós-estratificação. O [capítulo 3](03-estimador-mrp.qmd) mostra como o MrP resolve o problema das células vazias.

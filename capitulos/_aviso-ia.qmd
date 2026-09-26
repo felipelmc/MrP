@@ -1,0 +1,4 @@
+::: {.callout-note}
+## Texto escrito com o Claude
+O texto, o código e as figuras deste capítulo foram escritos com o Claude (Anthropic) e ainda não foram revisados pelo autor. As referências foram conferidas nas fontes (DOI ou arXiv), mas o conteúdo pode conter erros.
+:::

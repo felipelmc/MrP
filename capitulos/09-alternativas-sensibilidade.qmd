@@ -1,0 +1,289 @@
+---
+title: "Alternativas e análise de sensibilidade"
+description: "MrP com aprendizado de máquina, estimadores duplamente robustos e o que fazer com a hipótese que nenhum método testa: a de que a seleção é ignorável."
+eyebrow: "Capítulo 09"
+---
+
+{{< include _aviso-ia.qmd >}}
+
+```{r}
+#| label: c9-setup
+#| include: false
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+source(here::here("R/mundo.R"))
+source(here::here("R/mundo_interacao.R"))
+source(here::here("R/mundo_religiao.R"))
+source(here::here("R/utils.R"))
+suppressMessages({
+  library(tidyverse)
+  library(lme4)
+  library(dbarts)
+  library(gt)
+})
+theme_set(theme_notes())
+base      <- carregar_mundo()
+mundo_int <- carregar_mundo_interacao(base)
+mundo_rel <- carregar_mundo_religiao(base)
+```
+
+## Intuição
+
+O MrP não é a única forma de corrigir uma amostra não probabilística, e o modelo multinível não é a única forma de estimar as médias das células. Nos últimos anos, três famílias de alternativas ganharam espaço. A primeira troca a regressão multinível por métodos de aprendizado de máquina, que descobrem interações sozinhos. A segunda combina um modelo para o desfecho com um modelo para a participação, de modo que basta um dos dois estar certo (estimadores duplamente robustos). A terceira reescreve o MrP como ponderação, para aproveitar os diagnósticos que os pesos oferecem.
+
+Todas compartilham com o MrP a mesma hipótese: a seleção é ignorável dado o que se observa. Nenhuma delas corrige uma seleção que dependa de algo fora do _frame_, e nenhuma permite testar a hipótese com os dados da amostra. O que resta é perguntar o quanto a conclusão mudaria se a hipótese falhasse numa medida plausível: a análise de sensibilidade.
+
+## Formalização
+
+### MrP com aprendizado de máquina
+
+A regressão multinível impõe uma forma aos efeitos: soma na escala logit, com interações escolhidas pelo analista. Métodos de aprendizado de máquina estimam $\mathbb{E}[Y \mid X]$ com menos restrições. @bisbee2019barp propôs usar árvores de regressão aditivas bayesianas (BART) no lugar do modelo multinível; uma correção posterior [@goplerud2023corrigendum] mostrou que os ganhos relatados eram exagerados por um erro de ordenação no código. @ornstein2020stacked combina vários modelos por _stacking_, e @broniecki2022improved, no pacote `autoMrP`, combinam modelos multinível com diferentes preditores e métodos de aprendizado de máquina. @goplerud2024reevaluating mostra que modelos hierárquicos com interações profundas e _pooling_ adequado têm desempenho comparável ao desses métodos.
+
+### Estimadores duplamente robustos
+
+Seja $\hat{m}(x)$ um modelo para o desfecho e $\hat{\pi}(x)$ um modelo para a propensão de participar, estimado comparando a amostra com o _frame_. @chen2020doubly mostram que o estimador
+
+$$
+\boxed{\hat{\theta}_{DR} = \frac{\sum_c N_c\, \hat{m}_c}{N} + \frac{\sum_{i \in S} d_i\, \big(y_i - \hat{m}(x_i)\big)}{\sum_{i \in S} d_i}, \qquad d_i = \frac{1}{\hat{\pi}(x_i)},}
+$$
+
+é consistente se um dos dois modelos estiver correto. O primeiro termo é o MrP; o segundo corrige-o com a média ponderada dos resíduos. Se o modelo do desfecho estiver certo, os resíduos têm média zero em cada célula, e a correção some; se o da propensão estiver certo, os pesos reconstituem a população, e a correção remove o viés do modelo do desfecho.
+
+### MrP como ponderação
+
+O [capítulo 3](03-estimador-mrp.qmd) mostrou que o MrP pode ser escrito como uma média ponderada dos respondentes. @si2020weighting desenvolvem essa leitura como ponderação hierárquica bayesiana, e @si2021bayesraking propõem o _raking_ bayesiano, que incorpora margens conhecidas ao modelo. @giordano2026locally definem pesos localmente equivalentes para o MrP, que permitem aplicar a ele os diagnósticos usuais da ponderação: tamanho efetivo de amostra, equilíbrio das covariáveis e influência de cada respondente.
+
+### Sensibilidade à seleção não ignorável
+
+Se a participação depende do desfecho mesmo depois de condicionar em $X$, a estimativa corrigida tem um viés que depende de uma quantidade não identificada: o quanto a seleção depende de $Y$ diretamente. @little2020measures e @andridge2019indices propõem índices que tornam isso explícito. Constrói-se, com as variáveis auxiliares, a melhor predição linear do desfecho (um _proxy_), e um parâmetro $\phi \in [0, 1]$ indexa o quanto a seleção depende do desfecho em vez do _proxy_. Em $\phi = 0$ a seleção é ignorável dado o _proxy_; em $\phi = 1$ depende só do desfecho. O índice é o viés implicado por cada $\phi$, calculado com quantidades observáveis: a correlação entre o _proxy_ e o desfecho na amostra e a diferença entre a média do _proxy_ na amostra e na população. A leitura é a de uma análise de sensibilidade: que grau de seleção pelo desfecho seria preciso para mudar a conclusão?
+
+## Em R
+
+### Modelo do desfecho errado: quem corrige?
+
+No mundo do [capítulo 5](05-especificacao-validacao.qmd), o efeito da escolaridade muda com a idade. O Monte Carlo compara quatro estimativas para as 18 combinações de escolaridade e idade:
+
+- MrP com o modelo de efeitos principais, que omite a interação;
+- MrP com a interação com _pooling_;
+- o estimador duplamente robusto com o modelo de efeitos principais para o desfecho e um modelo de propensão com a interação entre escolaridade e idade, que é a forma da seleção do painel;
+- MrP com BART no lugar do modelo multinível.
+
+```{r}
+#| label: c9-funcoes
+celulas <- function(pop) pop |> mutate(escol_idade = paste(escolaridade_3cat, faixa_etaria, sep = " × "))
+pop_int   <- celulas(mundo_int$pop)
+frame_int <- pop_int |> count(across(all_of(c(VARS_FRAME, "escol_idade"))), name = "N")
+
+verdade_int <- bind_rows(
+  tibble(grupo = "Total", verdade = mean(pop_int$y_int)),
+  pop_int |> group_by(grupo = escol_idade) |> summarise(verdade = mean(y_int))
+)
+
+# estimativas nacional e por celula de escolaridade x idade a partir das
+# predicoes para o frame (pi) e, opcionalmente, da correcao DR
+agregar_c9 <- function(frame, pi, amostra = NULL, residuo = NULL, d = NULL) {
+  frame$pi <- pi
+  est <- bind_rows(
+    tibble(grupo = "Total", est = sum(frame$pi * frame$N) / sum(frame$N)),
+    frame |> group_by(grupo = escol_idade) |> summarise(est = sum(pi * N) / sum(N))
+  )
+  if (is.null(residuo)) return(est)
+  corr <- bind_rows(
+    tibble(grupo = "Total", corr = sum(d * residuo) / sum(d)),
+    tibble(grupo = amostra$escol_idade, r = d * residuo, d = d) |>
+      group_by(grupo) |> summarise(corr = sum(r) / sum(d))
+  )
+  left_join(est, corr, by = "grupo") |> mutate(est = est + coalesce(corr, 0)) |> select(-corr)
+}
+
+# propensao: amostra (s = 1) empilhada com o frame (s = 0, peso proporcional a N)
+propensao <- function(a, frame, formula) {
+  emp <- bind_rows(select(a, all_of(VARS_FRAME)) |> mutate(s = 1, w = 1),
+                   select(frame, all_of(VARS_FRAME), N) |>
+                     mutate(s = 0, w = N / sum(N) * nrow(a)) |> select(-N))
+  m <- suppressWarnings(glm(formula, data = emp, weights = w, family = binomial))
+  exp(predict(m, newdata = a))   # odds relativas de inclusao
+}
+
+# MrP com BART: probit BART nas variaveis do frame
+mrp_bart <- function(a, frame, y) {
+  # niveis de UF tirados do frame: UFs pequenas podem faltar na amostra
+  ufs <- sort(unique(frame$estado))
+  X  <- select(a, all_of(VARS_FRAME)) |> mutate(estado = factor(estado, ufs))
+  Xf <- select(frame, all_of(VARS_FRAME)) |> mutate(estado = factor(estado, ufs))
+  b  <- bart(X, a[[y]], x.test = Xf, ndpost = 300, nskip = 200, verbose = FALSE, keeptrees = FALSE)
+  colMeans(pnorm(b$yhat.test))
+}
+
+f_A <- ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado)
+f_B <- ~ escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado) +
+  (1 | escolaridade_3cat:faixa_etaria)
+f_prop <- s ~ estado + sexo + faixa_etaria * escolaridade_3cat + cor_raca
+ajustar_glmer <- function(f, y, a) {
+  suppressMessages(glmer(update(f, as.formula(paste(y, "~ ."))), data = a, family = binomial,
+                         control = glmerControl(optimizer = "bobyqa")))
+}
+```
+
+```{r}
+#| label: c9-mc-interacao
+estimar_c9_int <- function(r) {
+  a <- celulas(amostrar_optin(pop_int))
+  mA <- ajustar_glmer(f_A, "y_int", a)
+  mB <- ajustar_glmer(f_B, "y_int", a)
+  piA <- predict(mA, frame_int, type = "response", allow.new.levels = TRUE)
+  d   <- 1 / propensao(a, frame_int, f_prop)
+  resA <- a$y_int - predict(mA, a, type = "response")
+  bind_rows(
+    "MrP, efeitos principais" = agregar_c9(frame_int, piA),
+    "MrP, interação com pooling" =
+      agregar_c9(frame_int, predict(mB, frame_int, type = "response", allow.new.levels = TRUE)),
+    "Duplamente robusto" = agregar_c9(frame_int, piA, a, resA, d),
+    "MrP com BART" = agregar_c9(frame_int, mrp_bart(a, frame_int, "y_int")),
+    .id = "metodo") |>
+    mutate(replica = r)
+}
+
+mc9_int <- com_cache("c9_interacao",
+                     list(mundo_int$chave, 100, deparse(estimar_c9_int), deparse(agregar_c9),
+                          deparse(propensao), deparse(mrp_bart)),
+                     monte_carlo(100, estimar_c9_int))
+
+res_c9_int <- mc9_int |>
+  left_join(verdade_int, by = "grupo") |>
+  group_by(metodo, grupo) |>
+  summarise(vies = 100 * mean(est - verdade), reqm = 100 * sqrt(mean((est - verdade)^2)),
+            .groups = "drop")
+```
+
+```{r}
+#| label: tbl-c9-interacao
+#| tbl-cap: "Viés nacional e, nas 18 combinações de escolaridade e idade, viés absoluto médio e REQM média (pontos percentuais), em 100 amostras opt-in do mundo com interação."
+ordem_c9 <- c("MrP, efeitos principais", "MrP, interação com pooling",
+              "Duplamente robusto", "MrP com BART")
+res_c9_int |>
+  mutate(tipo = if_else(grupo == "Total", "nacional", "celulas")) |>
+  group_by(metodo) |>
+  summarise(vies_nacional = vies[tipo == "nacional"],
+            vies_celulas = mean(abs(vies[tipo == "celulas"])),
+            reqm_celulas = mean(reqm[tipo == "celulas"])) |>
+  mutate(metodo = factor(metodo, levels = ordem_c9)) |>
+  arrange(metodo) |>
+  gt() |>
+  fmt_number(-metodo, decimals = 2, dec_mark = ",") |>
+  cols_label(metodo = "Método", vies_nacional = "Viés nacional",
+             vies_celulas = "Viés nas células", reqm_celulas = "REQM nas células")
+```
+
+```{r}
+#| label: c9-valores-int
+#| include: false
+vc9 <- function(m, col = "vies") {
+  x <- res_c9_int |> filter(metodo == m, grupo != "Total")
+  mean(abs(x[[col]]))
+}
+```
+
+O MrP de efeitos principais erra as combinações de escolaridade e idade em `r num(vc9("MrP, efeitos principais"), 2)` pp em média. O estimador duplamente robusto, com o mesmo modelo errado para o desfecho e um modelo de propensão com a forma da seleção, reduz esse viés para `r num(vc9("Duplamente robusto"), 2)` pp, ao custo de uma REQM de `r num(vc9("Duplamente robusto", "reqm"), 2)` pp, contra `r num(vc9("MrP, efeitos principais", "reqm"), 2)` pp do MrP: os pesos inversos à propensão são variáveis. O MrP com a interação com _pooling_ ajustado com `lme4` fica com `r num(vc9("MrP, interação com pooling"), 2)` pp de viés e `r num(vc9("MrP, interação com pooling", "reqm"), 2)` pp de REQM (a variância da interação costuma ser estimada em zero, como no [capítulo 5](05-especificacao-validacao.qmd)), e o MrP com BART, com `r num(vc9("MrP com BART"), 2)` e `r num(vc9("MrP com BART", "reqm"), 2)` pp. O BART capta parte da interação sem a variância dos pesos do estimador duplamente robusto; aqui, é o método com a menor REQM, e o duplamente robusto, o de menor viés.
+
+### Seleção fora do _frame_: ninguém corrige
+
+No mundo do [capítulo 7](07-frames-nao-censitarios.qmd), a participação depende da religião, que não está no _frame_ base. O Monte Carlo aplica os mesmos métodos, todos sem a religião.
+
+```{r}
+#| label: c9-mc-religiao
+pop_rel   <- celulas(mundo_rel$pop)
+frame_rel <- pop_rel |> count(across(all_of(c(VARS_FRAME, "escol_idade"))), name = "N")
+f_prop_rel <- s ~ estado + sexo + faixa_etaria * escolaridade_3cat + cor_raca
+
+estimar_c9_rel <- function(r) {
+  a  <- celulas(amostrar_optin_rel(pop_rel))
+  mA <- ajustar_glmer(f_A, "y_rel", a)
+  piA <- predict(mA, frame_rel, type = "response", allow.new.levels = TRUE)
+  d   <- 1 / propensao(a, frame_rel, f_prop_rel)
+  resA <- a$y_rel - predict(mA, a, type = "response")
+  tibble(
+    metodo = c("Média bruta", "MrP, efeitos principais", "Duplamente robusto", "MrP com BART"),
+    est = c(mean(a$y_rel),
+            agregar_c9(frame_rel, piA)$est[1],
+            agregar_c9(frame_rel, piA, a, resA, d)$est[1],
+            agregar_c9(frame_rel, mrp_bart(a, frame_rel, "y_rel"))$est[1]),
+    replica = r)
+}
+
+mc9_rel <- com_cache("c9_religiao",
+                     list(mundo_rel$chave, 100, deparse(estimar_c9_rel), deparse(agregar_c9),
+                          deparse(propensao), deparse(mrp_bart)),
+                     monte_carlo(100, estimar_c9_rel))
+
+res_c9_rel <- mc9_rel |>
+  group_by(metodo) |>
+  summarise(vies = 100 * mean(est - mean(pop_rel$y_rel)), .groups = "drop")
+res_c9_rel
+```
+
+Com a religião fora do _frame_, a média bruta erra `r num(res_c9_rel$vies[res_c9_rel$metodo == "Média bruta"], 1)` pp, e o MrP, o estimador duplamente robusto e o MrP com BART ficam entre `r num(min(res_c9_rel$vies[res_c9_rel$metodo != "Média bruta"]), 1)` e `r num(max(res_c9_rel$vies[res_c9_rel$metodo != "Média bruta"]), 1)` pp. A dupla robustez protege contra um modelo errado, mas não contra uma variável que falta nos dois modelos.
+
+### Quanto de seleção pelo desfecho mudaria a conclusão?
+
+A análise de sensibilidade abaixo parte do mundo base, em que a seleção é ignorável, e acrescenta uma dependência direta da participação em relação ao desfecho: as odds de participar de quem tem a atitude são multiplicadas por $e^{\lambda}$. Para cada $\lambda$, o Monte Carlo mede o viés do MrP.
+
+```{r}
+#| label: c9-sensibilidade
+lambdas <- c(0, 0.1, 0.2, 0.3, 0.4, 0.5)
+pop_base <- base$pop
+
+estimar_c9_sens <- function(r) {
+  map_dfr(lambdas, \(l) {
+    p <- mutate(pop_base, odds_sel = odds_sel * exp(l * y))
+    a <- amostrar_optin(p)
+    m <- ajustar_glmer(f_A, "y", a)
+    fr <- frame_populacao(pop_base)
+    tibble(lambda = l,
+           est = sum(predict(m, fr, type = "response", allow.new.levels = TRUE) * fr$N) / sum(fr$N))
+  }) |> mutate(replica = r)
+}
+
+mc9_sens <- com_cache("c9_sensibilidade",
+                      list(base$chave, 100, lambdas, deparse(estimar_c9_sens)),
+                      monte_carlo(100, estimar_c9_sens))
+
+res_c9_sens <- mc9_sens |>
+  group_by(lambda) |>
+  summarise(vies = 100 * mean(est - base$verdade),
+            lo = 100 * quantile(est - base$verdade, 0.05),
+            hi = 100 * quantile(est - base$verdade, 0.95), .groups = "drop")
+```
+
+```{r}
+#| label: fig-c9-sensibilidade
+#| fig-cap: "Viés do MrP quando a participação depende diretamente do desfecho, em função de λ (as odds de participar de quem tem a atitude são multiplicadas por e^λ). Pontos: viés médio em 100 amostras; barras: 90% das amostras."
+#| fig-width: 7
+#| fig-height: 3.2
+ggplot(res_c9_sens, aes(x = lambda, y = vies)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = cn_palette$ink3) +
+  geom_linerange(aes(ymin = lo, ymax = hi), colour = cn_palette$line_strong, linewidth = 1) +
+  geom_point(colour = cn_palette$accent, size = 2.5) +
+  scale_x_continuous(labels = rotulo_num) +
+  scale_y_continuous(labels = rotulo_num) +
+  labs(x = expression(lambda), y = "Viés do MrP (pontos percentuais)")
+```
+
+```{r}
+#| label: c9-valores-sens
+#| include: false
+ajuste_sens <- lm(vies ~ 0 + lambda, data = res_c9_sens)
+por_decimo  <- coef(ajuste_sens)[[1]] / 10
+```
+
+Cada décimo de $\lambda$ (uma razão de chances de participação de cerca de 1,1 entre quem tem e quem não tem a atitude, dado $X$) acrescenta cerca de `r num(por_decimo, 1)` pp de viés à estimativa do MrP. Com $\lambda = 0{,}5$, isto é, com chances (_odds_) de participação 65% maiores para quem tem a atitude, o viés chega a `r num(res_c9_sens$vies[res_c9_sens$lambda == 0.5], 1)` pp. Nenhum dado da amostra informa $\lambda$; a análise de sensibilidade mostra o quanto a conclusão depende dele, e a discussão substantiva (há razões para achar que quem tem a atitude participa mais de painéis _online_, mesmo dentro dos grupos do _frame_?) diz que valores são plausíveis.
+
+## Armadilhas
+
+- Trocar o modelo não troca a hipótese. Métodos de aprendizado de máquina e estimadores duplamente robustos corrigem erros de especificação, mas continuam supondo que a seleção é ignorável dado o que se observa.
+- A dupla robustez tem custo: os pesos inversos à propensão podem ser muito variáveis, e o estimador fica menos preciso que o MrP quando o modelo do desfecho está razoável.
+- Métodos com muitos graus de liberdade precisam de dados. Com 2 mil respondentes e milhares de células, um BART pode fazer pouco mais que um modelo aditivo, e a vantagem aparece sobretudo em amostras grandes com interações fortes.
+- A sensibilidade só é informativa se os valores do parâmetro forem discutidos substantivamente. Um intervalo de vieses sem uma discussão do que é plausível não orienta decisão nenhuma.
+
+## Leituras
+
+@bisbee2019barp e a correção de @goplerud2023corrigendum apresentam o BARP; @ornstein2020stacked, o _stacking_; @broniecki2022improved, o `autoMrP`. @goplerud2024reevaluating compara esses métodos com modelos hierárquicos. @chen2020doubly desenvolvem a inferência duplamente robusta com amostras não probabilísticas. @si2021bayesraking propõem o _raking_ bayesiano, e @giordano2026locally, os pesos localmente equivalentes para o MrP. @little2020measures e @andridge2019indices propõem os índices de sensibilidade à seleção não ignorável para médias e proporções.

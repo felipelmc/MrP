@@ -1,0 +1,267 @@
+---
+title: "Além do desfecho binário"
+description: "MrP para escalas ordinais com \"não sei\", escalas de 1 a 10, valores monetários lidos numa régua com censura e índices construídos a partir de vários itens."
+eyebrow: "Capítulo 08"
+---
+
+{{< include _aviso-ia.qmd >}}
+
+```{r}
+#| label: c8-setup
+#| include: false
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+source(here::here("R/mundo.R"))
+source(here::here("R/mundo_desfechos.R"))
+source(here::here("R/utils.R"))
+source(here::here("R/mrp.R"))
+suppressMessages({
+  library(tidyverse)
+  library(lme4)
+  library(brms)
+  library(gt)
+})
+theme_set(theme_notes())
+mundo <- carregar_mundo_desfechos()
+pop   <- mundo$pop
+frame <- frame_populacao(pop)
+dir.create(here::here("modelos"), showWarnings = FALSE)
+
+set.seed(42)
+amostra <- amostrar_optin(pop, n = 2000)
+
+priors_c8 <- c(prior(normal(0, 1), class = b), prior(normal(0, 1), class = sd))
+rhs <- "escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado)"
+ajustar <- function(formula, familia, nome, dados = amostra, ...) {
+  brm(formula, data = dados, family = familia, prior = priors_c8,
+      chains = 4, cores = 4, iter = 1000, seed = 2023, backend = "cmdstanr",
+      refresh = 0, silent = 2, file = here::here("modelos", nome), file_refit = "on_change", ...)
+}
+```
+
+## Intuição
+
+Até aqui, o desfecho foi binário, e o estimando, uma proporção. Os questionários têm outros formatos: escalas de concordância com cinco pontos e a opção "não sei", escalas de 1 a 10, valores em reais digitados ou lidos numa régua, baterias de itens que se quer resumir num índice. O MrP se estende a todos eles, porque os dois passos continuam os mesmos: um modelo para a distribuição do desfecho em cada célula e uma soma ponderada pela população.
+
+O que muda é o que se soma. Para uma escala ordinal, somam-se as probabilidades de cada categoria. Para uma escala numérica, a média de cada célula. Para uma mediana, que não é uma média, é preciso somar as distribuições das células e só depois achar a mediana da mistura. Para um índice de vários itens, é preciso decidir se o estimando é um traço latente, com escala arbitrária, ou algo observável, como o número esperado de respostas numa direção.
+
+## Formalização
+
+### Escalas ordinais com "não sei"
+
+Para uma escala com categorias $1, \dots, K$, o modelo logit cumulativo escreve
+
+$$
+\Pr(y_i \le k) = \text{logit}^{-1}(\kappa_k - \eta_i), \qquad k = 1, \dots, K - 1,
+$$
+
+com limiares $\kappa_1 < \dots < \kappa_{K-1}$ e o preditor linear $\eta_i$ de sempre. A opção "não sei" (NS) não é uma categoria da escala. Um modelo em duas partes separa a probabilidade de NS, $\nu_c$, da distribuição entre quem responde, $p_c(k)$:
+
+$$
+\Pr(\text{NS} \mid c) = \nu_c, \qquad \Pr(y = k \mid c) = (1 - \nu_c)\, p_c(k).
+$$
+
+O produto é calculado célula a célula, e só então agregado: a média dos produtos não é o produto das médias. O estimando "entre quem tem opinião" é $\sum_c N_c (1 - \nu_c)\, p_c(k) \big/ \sum_c N_c (1 - \nu_c)$, que pondera cada célula pelo número de pessoas com opinião.
+
+### Escalas de 1 a 10
+
+Uma escala de 1 a 10 pode ser tratada como $y - 1$ tentativas bem-sucedidas em 9, com uma distribuição beta-binomial: a probabilidade de "sucesso" varia entre pessoas segundo uma beta de média $\mu_c = \text{logit}^{-1}(\eta_c)$ e precisão $\phi$. A média da célula é $1 + 9\mu_c$, e a média populacional é a soma ponderada dessas médias. A beta-binomial acomoda a dispersão maior que a binomial, comum em escalas em que as pessoas se concentram nos extremos.
+
+### Valores numa régua com censura
+
+Quando o respondente escolhe um valor numa régua discreta, o valor verdadeiro $v_i$ fica entre os pontos médios dos valores vizinhos: quem marca R$ 5.000 declarou algo entre os pontos médios com R$ 4.500 e com R$ 6.000. Os extremos ("menos de 500", "mais de 100.000") são censuras. Com $\log v_i \sim \mathcal{N}(\eta_i, \sigma^2)$, a verossimilhança de uma resposta no intervalo $[l_i, u_i)$ é
+
+$$
+\Phi\!\left(\frac{\log u_i - \eta_i}{\sigma}\right) - \Phi\!\left(\frac{\log l_i - \eta_i}{\sigma}\right),
+$$
+
+e as censuras nos extremos usam só um dos termos. Tratar o valor marcado como exato ignora o arredondamento imposto pela régua.
+
+Para uma mediana populacional, a pós-estratificação soma as funções de distribuição das células:
+
+$$
+F(m) = \frac{\sum_c N_c\, \Phi\!\left((\log m - \eta_c)/\sigma\right)}{\sum_c N_c}, \qquad \text{mediana} = F^{-1}(0{,}5).
+$$
+
+A mediana da população não é a média das medianas das células.
+
+### Índices de vários itens
+
+Para $K$ itens binários, o modelo de dois parâmetros da teoria de resposta ao item (IRT 2PL) escreve $\Pr(y_{ik} = 1) = \text{logit}^{-1}\big(a_k(\theta_i - b_k)\big)$, com discriminação $a_k$, dificuldade $b_k$ e traço latente $\theta_i$. No MrP, o traço tem uma regressão latente, $\theta_i = \mathbf{x}_i^\top\boldsymbol{\beta} + \alpha_{j[i]} + \varepsilon_i$, $\varepsilon_i \sim \mathcal{N}(0, 1)$ [@tausanovitch2013measuring; @caughey2015dynamic; @burkner2021bayesian]. A escala de $\theta$ é arbitrária: somar uma constante a todos os $\theta_i$ e aos $b_k$ não muda nada. Um estimando identificado é o número esperado de respostas positivas,
+
+$$
+S_c = \sum_{k=1}^{K} \int \text{logit}^{-1}\!\big(a_k(\mu_c + \varepsilon - b_k)\big)\, \phi(\varepsilon)\, d\varepsilon, \qquad \mu_c = \mathbf{x}_c^\top\boldsymbol{\beta} + \alpha_{j[c]},
+$$
+
+pós-estratificado como qualquer média. O mesmo número pode ser estimado sem traço latente, somando $K$ MrPs binários, um por item. O modelo de IRT acrescenta estrutura (os itens compartilham a mesma dependência das variáveis demográficas) e uma escala contínua para comparar pessoas.
+
+## Em R
+
+Os quatro desfechos deste capítulo foram gerados com a mesma estrutura demográfica dos capítulos anteriores (definidos em [`R/mundo_desfechos.R`](https://github.com/felipelmc/MrP/blob/main/R/mundo_desfechos.R)), e todos os exemplos usam a mesma amostra _opt-in_ de 2 mil pessoas.
+
+### Concordância em cinco pontos com "não sei"
+
+```{r}
+#| label: c8-ordinal
+fit_ns  <- ajustar(as.formula(paste("ns_ord ~", rhs)), bernoulli(), "c8_ns")
+fit_ord <- ajustar(as.formula(paste("y_ord ~", rhs)), cumulative("logit"), "c8_ord",
+                   dados = filter(amostra, !ns_ord))
+
+# produto celula a celula, com os mesmos sorteios nos dois modelos
+ids   <- sample(seq_len(ndraws(fit_ord)), 500)
+nu    <- posterior_epred(fit_ns, newdata = frame, draw_ids = ids, allow_new_levels = TRUE)
+p_ord <- posterior_epred(fit_ord, newdata = frame, draw_ids = ids, allow_new_levels = TRUE)
+N <- frame$N
+dist_total <- sapply(1:5, \(k) drop(((1 - nu) * p_ord[, , k]) %*% N) / sum(N))
+dist_ns    <- drop(nu %*% N) / sum(N)
+concorda_opiniao <- rowSums(dist_total[, 4:5]) / (1 - dist_ns)
+
+verdade_ord <- c(prop.table(table(factor(pop$y_ord, 1:5), useNA = "no")) * mean(!pop$ns_ord),
+                 NS = mean(pop$ns_ord))
+tibble(categoria = c(1:5, "NS"),
+       verdade   = verdade_ord,
+       bruta     = c(prop.table(table(factor(amostra$y_ord, 1:5))) * mean(!amostra$ns_ord),
+                     mean(amostra$ns_ord)),
+       mrp       = c(colMeans(dist_total), mean(dist_ns)))
+```
+
+```{r}
+#| label: c8-ordinal-valores
+#| include: false
+verdade_conc <- mean(pop$y_ord[!pop$ns_ord] >= 4)
+bruta_conc   <- mean(amostra$y_ord[!amostra$ns_ord] >= 4)
+```
+
+Entre quem tem opinião, concordam (categorias 4 e 5) `r pct(verdade_conc)` da população; a amostra dá `r pct(bruta_conc)`, e o MrP em duas partes, `r pct(median(concorda_opiniao))` (intervalo de 90% de `r pct(quantile(concorda_opiniao, 0.05))` a `r pct(quantile(concorda_opiniao, 0.95))`). A proporção de "não sei" é de `r pct(verdade_ord[["NS"]])` na população e de `r pct(mean(amostra$ns_ord))` na amostra, que tem menos pessoas com ensino fundamental, o grupo que mais responde "não sei"; o MrP estima `r pct(mean(dist_ns))`.
+
+### Escala de 1 a 10
+
+```{r}
+#| label: c8-escala
+amostra <- amostra |> mutate(sucessos = y_10 - 1)
+fit_10 <- ajustar(as.formula(paste("sucessos | trials(9) ~", rhs)), beta_binomial(), "c8_10")
+media_10 <- 1 + pos_estratificar(fit_10, mutate(frame, sucessos = 0), ndraws = 1000)[, "Total"]
+c(verdade = mean(pop$y_10), bruta = mean(amostra$y_10), mrp = median(media_10))
+```
+
+A média da escala na população é `r num(mean(pop$y_10), 2)`; a da amostra, `r num(mean(amostra$y_10), 2)`, e a do MrP, `r num(median(media_10), 2)`, com intervalo de 90% de `r num(quantile(media_10, 0.05), 2)` a `r num(quantile(media_10, 0.95), 2)`.
+
+### Valor numa régua com censura
+
+O valor em reais foi lido numa régua com os mesmos pontos do questionário deste projeto (500 em 500 até 5.000, 1.000 em 1.000 até 10.000, 5.000 em 5.000 até 50.000 e 10.000 em 10.000 até 100.000). Cada resposta vira um intervalo entre os pontos médios, na escala log, dos valores vizinhos.
+
+```{r}
+#| label: c8-regua
+meios <- exp((log(GRADE_RS[-1]) + log(GRADE_RS[-length(GRADE_RS)])) / 2)
+limites <- function(y, cens) {
+  k <- match(y, GRADE_RS)
+  tibble(
+    inf = case_when(cens == "left" ~ log(500), cens == "right" ~ log(100000),
+                    k == 1 ~ log(500), TRUE ~ log(meios[pmax(k - 1, 1)])),
+    sup = case_when(k == length(GRADE_RS) ~ log(100000), TRUE ~ log(meios[pmin(k, length(meios))])),
+    tipo = if_else(cens == "none", "interval", cens)
+  )
+}
+amostra <- bind_cols(amostra, limites(amostra$y_rs, amostra$cens_rs))
+
+fit_rs <- ajustar(as.formula(paste("inf | cens(tipo, sup) ~", rhs)), gaussian(), "c8_rs")
+fit_rs_exato <- ajustar(as.formula(paste("log(y_rs) ~", rhs)), gaussian(), "c8_rs_exato")
+
+# mediana populacional: soma das distribuicoes das celulas, sorteio a sorteio
+mediana_pop <- function(fit, ndraws = 200) {
+  ids <- sample(seq_len(ndraws(fit)), ndraws)
+  eta <- posterior_linpred(fit, newdata = mutate(frame, inf = 0, sup = 0, tipo = "none", y_rs = 1),
+                           draw_ids = ids, allow_new_levels = TRUE)
+  sigma <- as_draws_df(fit)$sigma[ids]
+  grade_m <- log(seq(1000, 20000, by = 25))
+  sapply(seq_along(ids), \(s) {
+    F <- sapply(grade_m, \(lm) sum(frame$N * pnorm((lm - eta[s, ]) / sigma[s])) / sum(frame$N))
+    exp(approx(F, grade_m, xout = 0.5)$y)
+  })
+}
+med_cens  <- mediana_pop(fit_rs)
+med_exato <- mediana_pop(fit_rs_exato)
+c(verdade = median(pop$valor_rs), bruta = median(amostra$y_rs),
+  mrp_censura = median(med_cens), mrp_valor_exato = median(med_exato))
+```
+
+A mediana verdadeira dos valores é R$ `r inteiro(median(pop$valor_rs))`. A mediana da amostra, lida na régua, é R$ `r inteiro(median(amostra$y_rs))`. O MrP com censura intervalar estima R$ `r inteiro(median(med_cens))`, e o que trata o valor marcado como exato, R$ `r inteiro(median(med_exato))`. Nos dois casos, a pós-estratificação soma as distribuições das células antes de calcular a mediana.
+
+### Índice de seis itens
+
+O modelo de IRT com regressão latente é escrito no `brms` como um modelo não linear, em formato longo (uma linha por pessoa e item). O desvio-padrão do efeito de cada pessoa é fixado em 1, o que define a unidade da escala latente [@burkner2021bayesian].
+
+```{r}
+#| label: c8-irt
+longo <- amostra |>
+  mutate(id = row_number()) |>
+  pivot_longer(starts_with("item_"), names_to = "item", values_to = "resp")
+
+f_irt <- bf(
+  resp ~ exp(logalpha) * eta,
+  eta ~ 0 + item + escolaridade_3cat + cor_raca + sexo + faixa_etaria + (1 | estado) + (1 | id),
+  logalpha ~ 0 + item,
+  nl = TRUE
+)
+priors_irt <- c(prior(normal(0, 2), class = b, nlpar = eta),
+                prior(normal(0, 1), class = b, nlpar = logalpha),
+                prior(normal(0, 1), class = sd, group = estado, nlpar = eta),
+                prior(constant(1), class = sd, group = id, nlpar = eta))
+fit_irt <- brm(f_irt, data = longo, family = bernoulli(), prior = priors_irt,
+               chains = 4, cores = 4, iter = 1000, seed = 2023, backend = "cmdstanr",
+               refresh = 0, silent = 2, file = here::here("modelos", "c8_irt"),
+               file_refit = "on_change")
+
+# numero esperado de respostas positivas por celula, integrando o efeito da
+# pessoa por pontos de uma normal padrao
+escore_pop <- function(fit, ndraws = 200, Q = 40) {
+  ids <- sample(seq_len(ndraws(fit)), ndraws)
+  eps <- qnorm((seq_len(Q) - 0.5) / Q)
+  d   <- as_draws_df(fit)
+  total <- 0
+  for (k in 1:6) {
+    nd  <- mutate(frame, item = paste0("item_", k), id = -1)
+    eta <- posterior_linpred(fit, newdata = nd, nlpar = "eta", draw_ids = ids,
+                             re_formula = ~ (1 | estado), allow_new_levels = TRUE)
+    a   <- exp(d[[paste0("b_logalpha_itemitem_", k)]][ids])
+    pk  <- Reduce(`+`, lapply(eps, \(e) plogis(a * (eta + e)))) / Q
+    total <- total + pk
+  }
+  drop(total %*% frame$N) / sum(frame$N)
+}
+escore_irt <- escore_pop(fit_irt)
+
+# alternativa sem traco latente: seis MrPs binarios (lme4), somados
+escore_itens <- sum(sapply(1:6, \(k) {
+  m <- glmer(as.formula(paste0("item_", k, " ~ ", rhs)), data = amostra, family = binomial,
+             control = glmerControl(optimizer = "bobyqa"))
+  sum(predict(m, frame, type = "response", allow.new.levels = TRUE) * frame$N) / sum(frame$N)
+}))
+
+c(verdade = mean(rowSums(select(pop, starts_with("item_")))),
+  bruta = mean(rowSums(select(amostra, starts_with("item_")))),
+  mrp_irt = median(escore_irt), mrp_item_a_item = escore_itens)
+```
+
+O número médio de respostas positivas nos seis itens é `r num(mean(rowSums(select(pop, starts_with("item_")))), 2)` na população e `r num(mean(rowSums(select(amostra, starts_with("item_")))), 2)` na amostra. O MrP com IRT estima `r num(median(escore_irt), 2)` (intervalo de 90% de `r num(quantile(escore_irt, 0.05), 2)` a `r num(quantile(escore_irt, 0.95), 2)`), e a soma de seis MrPs binários, `r num(escore_itens, 2)`. Os dois caminhos chegam ao mesmo lugar; o de IRT dá, além disso, os parâmetros dos itens e uma escala contínua para as pessoas, e o item a item dispensa a hipótese de um único traço latente.
+
+Os coeficientes demográficos do modelo de IRT estão na escala do traço latente, cuja unidade é fixada pelo desvio-padrão 1 do efeito de cada pessoa. Como o mundo sintético foi gerado exatamente assim, eles podem ser comparados aos efeitos verdadeiros:
+
+```{r}
+#| label: c8-irt-coef
+fixef(fit_irt)[grep("^eta_(escol|cor|sexo|faixa)", rownames(fixef(fit_irt))), c("Estimate", "Q2.5", "Q97.5")] |>
+  as_tibble(rownames = "parametro") |>
+  mutate(verdadeiro = c(PARAMETROS$escolaridade[-1], PARAMETROS$cor_raca[-1],
+                        PARAMETROS$sexo[-1], PARAMETROS$faixa_etaria[-1]))
+```
+
+## Armadilhas
+
+- "Não sei" como categoria da escala ou como dado faltante muda o estimando. O modelo em duas partes separa as duas perguntas: quantos têm opinião e o que pensa quem tem.
+- Produtos e razões se calculam célula a célula. Multiplicar a proporção nacional de quem tem opinião pela distribuição nacional entre quem responde dá um número errado, porque as duas coisas variam juntas entre as células.
+- A mediana, os quantis e qualquer estimando não linear exigem pós-estratificar a distribuição, e não um resumo de cada célula.
+- A escala de um traço latente é arbitrária. Reporte estimandos identificados, como o número esperado de respostas numa direção, e teste antes se os itens medem mesmo uma única dimensão.
+- As caudas de uma distribuição log-normal dependem da forma assumida. Com uma régua que corta em 100.000, os quantis altos são extrapolação.
+
+## Leituras
+
+@tausanovitch2013measuring e @caughey2015dynamic combinam modelos de resposta ao item com MrP para estimar preferências agregadas. @burkner2021bayesian mostra como escrever modelos de IRT no `brms`, inclusive com regressão latente. @goplerud2025multivariate propõem um MrP multivariado para vários itens ao mesmo tempo, uma alternativa aos modelos com traço latente único.

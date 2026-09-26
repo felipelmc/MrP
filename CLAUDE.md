@@ -1,10 +1,14 @@
 # CLAUDE.md
 
-Orientações para o Claude Code neste repositório de anotações de disciplina.
+Orientações para o Claude Code neste repositório: um estudo de métodos sobre MrP, e não anotações de disciplina.
+
+## Exceção deste livro: texto escrito com IA
+
+O texto dos capítulos foi escrito com o Claude, a pedido do autor. Por isso, **neste livro**, a regra de `::: nota-ia` (abaixo, em "Política de conteúdo") não vale para o corpo dos capítulos: cada capítulo abre com `{{< include _aviso-ia.qmd >}}`, logo depois do cabeçalho, e o texto segue sem caixas. Quando o autor revisar um capítulo, o aviso daquele capítulo é trocado por um que diga "revisado pelo autor". Comentários que o próprio autor acrescentar ficam fora de qualquer caixa. As demais convenções do template (estilo, matemática, bibliografia, figuras) continuam valendo.
 
 ## O que é
 
-Um livro Quarto com as anotações de uma disciplina, publicado em `felipelamarca.com/<repo>/`. O visual e os componentes vêm da extensão `_extensions/felipelmc/course-notes/`, mantida em [felipelmc/Course-Notes-Template](https://github.com/felipelmc/Course-Notes-Template). O `_quarto.yml` do repositório só tem os dados da disciplina e a ordem dos capítulos.
+Um livro Quarto, publicado em `felipelamarca.com/MrP/`. O visual e os componentes vêm da extensão `_extensions/felipelmc/course-notes/`, mantida em [felipelmc/Course-Notes-Template](https://github.com/felipelmc/Course-Notes-Template). O `_quarto.yml` do repositório só tem os dados da disciplina e a ordem dos capítulos.
 
 ## Comandos
 
@@ -13,8 +17,6 @@ quarto preview                                              # servidor local com
 quarto render                                               # renderiza tudo e atualiza _freeze/
 python3 _extensions/felipelmc/course-notes/tools/check.py pre        # checagens do CI
 python3 _extensions/felipelmc/course-notes/tools/check.py post _book
-_extensions/felipelmc/course-notes/tools/nova-aula.sh 4 "Título" 2026-04-01
-_extensions/felipelmc/course-notes/tools/pdf.sh trabalhos/tarefa-1  # PDF de um trabalho
 quarto update extension felipelmc/Course-Notes-Template     # atualizar o template
 ```
 
@@ -27,13 +29,16 @@ quarto update extension felipelmc/Course-Notes-Template     # atualizar o templa
 
 ## Estrutura e convenções
 
-- Aulas em `aulas/aula-NN.qmd` (dois dígitos). Cabeçalho: `title`, `aula` (número), `date` (opcional), `description`. Toda aula nova precisa entrar em `book.chapters` no `_quarto.yml`, com `text: "NN · Título"`.
-- Esqueleto da aula com leituras: `## Leituras` (com `### @chave, cap. N` por texto lido), `## Anotações de aula`, `## Simulação` (opcional). Aula sem leituras: os tópicos ficam direto em `##`, e a simulação vem no fim.
+- Capítulos em `capitulos/NN-slug.qmd` (dois dígitos). Cabeçalho: `title`, `description` e `eyebrow: "Capítulo NN"` (não há `aulas/` neste livro). Todo capítulo novo precisa entrar em `book.chapters` no `_quarto.yml`, com `text: "NN · Título"`; só entram capítulos prontos.
+- Esqueleto de um capítulo: aviso de IA, bloco de setup (`#| include: false`), `## Intuição`, `## Formalização`, `## Em R`, `## Simulação` (OJS, opcional), `## Armadilhas`, `## Leituras`. Rótulos de blocos com prefixo `cN-`.
+- Referências a outros capítulos são links (`[capítulo 2](02-modelos-multinivel.qmd)`): equações e seções só têm referência cruzada dentro da mesma página, então uma equação usada em outro capítulo é repetida.
+- O mundo sintético está em `R/mundo.R` (parâmetros fictícios em `PARAMETROS`) e `dados/` (composição da PNADC e coeficientes de seleção, exportados do repositório privado de pesquisa por `estudo_mrp/R/exportar_mundo.R`). Nenhum dado do survey entra aqui. Simulações demoradas usam `com_cache()` (pasta `_cache-sim/`) e os modelos `brms` usam `file = here::here("modelos", ...)` com `file_refit = "on_change"`; as duas pastas ficam fora do git. Números no texto passam por `num()`, `pct()` e `inteiro()` de `R/utils.R` (vírgula decimal).
+- Extensões do mundo para capítulos específicos ficam em arquivos próprios (`R/mundo_interacao.R`, `R/mundo_religiao.R`, `R/mundo_desfechos.R`), cada uma acrescentando o próprio md5 à chave. Nunca edite `R/mundo.R` sem necessidade: ele entra na chave de cache de todos os capítulos, e qualquer mudança refaz todos os Monte Carlos (os dos capítulos 4 e 5 levam dezenas de minutos).
+- Ajustes `brms` lidos do arquivo (`file = ...`) não trazem o modelo compilado. Antes de um Monte Carlo com `update(..., recompile = FALSE)`, compile um molde com `update(fit, recompile = TRUE, chains = 1, iter = 20)` dentro da expressão de `com_cache()`, para que só rode quando o cache precisar ser refeito.
+- A pós-estratificação por sorteio está em `R/mrp.R` (`pos_estratificar()`, `resumir_draws()`). Estimandos não lineares (produtos de duas partes, medianas, escores de IRT) são calculados célula a célula antes de agregar; ver o capítulo 8.
 - Citações literais: `> texto [@chave, p. N]`. Uma única bibliografia, `references.bib`, com chaves `sobrenomeANOpalavra`.
 - **Nunca use `::: {#refs}`**: num livro, ele junta a bibliografia inteira numa página e esconde as referências das outras. As referências saem sozinhas no fim de cada página.
 - Nunca declare `format: html` no `_quarto.yml` nem nas páginas; o formato vem da extensão.
-- Trabalhos em `trabalhos/<slug>/index.qmd`, com os campos `tipo`, `date`, `description`, `image`, `metodos`, `dados`, `materiais` e `abstract` (ver `guia/trabalhos.qmd` no template). O PDF entregue fica na pasta e é a versão oficial. A vitrine **não mostra notas**.
-- Slides ficam em `trabalhos/<slug>/slides/`, com `_quarto.yml` próprio (`type: default`) e `embed-resources: true`. Renderize com `quarto render trabalhos/<slug>/slides` e faça o commit do `index.html`.
 - Simulações em OJS ficam no próprio arquivo da aula, numa seção `## Simulação` no fim (nunca em arquivo incluído: o `_freeze` só enxerga o texto do arquivo da aula); o texto que as apresenta, se escrito com IA, vai em `::: {.nota-ia collapse="false" ...}`. Importe de `/_extensions/felipelmc/course-notes/ojs/notes.js`, use `rng(semente)` e `palette(scheme())`, envolva em `::: cn-sim` dentro de `::: panel-tabset` com as abas "Interativo" e "Em R" (esta com `#| eval: false`).
 - Figuras em R: `source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))` e `theme_notes()`. Caminhos de dados sempre com `here::here()`, nunca absolutos.
 

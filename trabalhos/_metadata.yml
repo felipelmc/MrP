@@ -1,5 +1,0 @@
-# Opções comuns às páginas de trabalho (não afetam o PDF, que é renderizado fora do livro).
-shift-heading-level-by: 1
-code-fold: true
-code-tools: false
-curso-nome: "Course Notes"
