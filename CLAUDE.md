@@ -6,13 +6,9 @@ Orientações para o Claude Code neste repositório: um estudo de métodos sobre
 
 O texto dos capítulos foi escrito com o Claude, a pedido do autor. Por isso, **neste livro**, a regra de `::: nota-ia` (abaixo, em "Política de conteúdo") não vale para o corpo dos capítulos: cada capítulo abre com `{{< include _aviso-ia.qmd >}}`, logo depois do cabeçalho, e o texto segue sem caixas. Quando o autor revisar um capítulo, o aviso daquele capítulo é trocado por um que diga "revisado pelo autor". Comentários que o próprio autor acrescentar ficam fora de qualquer caixa. As demais convenções do template (estilo, matemática, bibliografia, figuras) continuam valendo.
 
-## Exceção deste livro: coluna de leitura mais larga
-
-A pedido do autor (2026-09-26), a coluna de texto tem 900 px, contra 670 px do template, por causa das fórmulas, tabelas e blocos de código. A sobrescrita fica em `tema/largura.scss`, aplicada por cima do tema da extensão no bloco `format:` do `_quarto.yml` (a única coisa além dos dados do livro e da ordem dos capítulos). Se a mudança for levada ao template, apague os dois.
-
 ## O que é
 
-Um livro Quarto, publicado em `felipelamarca.com/MrP/`. O visual e os componentes vêm da extensão `_extensions/felipelmc/course-notes/`, mantida em [felipelmc/Course-Notes-Template](https://github.com/felipelmc/Course-Notes-Template). O `_quarto.yml` do repositório só tem os dados da disciplina, a ordem dos capítulos e a sobrescrita da largura (seção acima).
+Um livro Quarto, publicado em `felipelamarca.com/MrP/`. O visual e os componentes vêm da extensão `_extensions/felipelmc/course-notes/`, mantida em [felipelmc/Course-Notes-Template](https://github.com/felipelmc/Course-Notes-Template). O `_quarto.yml` do repositório só tem os dados da disciplina e a ordem dos capítulos.
 
 ## Comandos
 
