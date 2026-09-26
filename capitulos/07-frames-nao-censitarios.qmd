@@ -26,7 +26,7 @@ pop   <- mundo$pop
 
 ## Intuição
 
-O [capítulo 1](01-amostras-nao-probabilisticas.qmd) mostrou que nenhuma correção remove o viés de uma seleção que dependa de algo fora do _frame_. Em pesquisas brasileiras, a religião é o exemplo mais evidente: os evangélicos votam de forma diferente dos católicos e podem participar menos de painéis _online_, mas a PNAD Contínua, fonte habitual dos _frames_, não pergunta religião. Se a religião afeta a participação e o desfecho, é preciso incluí-la no modelo e na pós-estratificação.
+O [capítulo 1](01-amostras-nao-probabilisticas.qmd) mostrou que as correções dependem de a seleção ser ignorável dado o _frame_, e o [capítulo 3](03-estimador-mrp.qmd) lembrou que nenhuma delas remove o viés de uma seleção que dependa de algo fora dele. Em pesquisas brasileiras, a religião é um exemplo natural: evangélicos e católicos votam, em média, de forma diferente, a participação em painéis _online_ pode variar com a religião, e a PNAD Contínua, fonte habitual dos _frames_, não pergunta religião. Se a religião afeta a participação e o desfecho, é preciso incluí-la no modelo e na pós-estratificação.
 
 Incluí-la no modelo é fácil, porque o _survey_ pergunta a religião. O difícil é o _frame_: para pós-estratificar, é preciso saber quantas pessoas há em cada combinação de UF, sexo, idade, escolaridade, cor/raça e religião. Às vezes essa distribuição conjunta existe, como nos microdados do Censo. Muitas vezes só se conhecem algumas margens, como a religião por UF ou por sexo e idade. Este capítulo compara as saídas para essa situação.
 
@@ -42,9 +42,9 @@ $$
 Escrevendo $N_{c,z} = N_c \Pr(Z = z \mid X = c)$, o problema é conhecer a distribuição condicional de $Z$ dentro de cada célula. Há quatro maneiras.
 
 1. **Junta completa.** Com microdados que tragam $X$ e $Z$ ao mesmo tempo, como a amostra do Censo, $N_{c,z}$ é observado diretamente.
-2. **Pós-estratificação sintética.** @leemann2017extending propõem supor que, dentro de cada UF, $Z$ é independente das demais variáveis: $\Pr(Z = z \mid X = c) \approx \Pr(Z = z \mid \text{UF} = j[c])$, que vem de uma margem publicada. Num modelo linear aditivo, a estimativa pós-estratificada depende só das margens de cada variável, e a junta sintética dá exatamente o mesmo resultado que a verdadeira. Num modelo logístico, a aproximação piora quando $Z$ é muito associada às outras variáveis e os efeitos são grandes.
+2. **Pós-estratificação sintética.** @leemann2017extending propõem supor que, dentro de cada UF, $Z$ é independente das demais variáveis: $\Pr(Z = z \mid X = c) \approx \Pr(Z = z \mid \text{UF} = j[c])$, que vem de uma margem publicada. Num modelo linear aditivo, a estimativa nacional e a de cada UF dependem só das margens das variáveis dentro da UF, e a junta sintética dá para elas o mesmo resultado que a verdadeira. As estimativas por grupos de $Z$ ou por outras variáveis de $X$, não: elas dependem da composição conjunta, que a hipótese de independência erra. Num modelo logístico, até a estimativa nacional se afasta da verdadeira, tanto mais quanto mais $Z$ for associada às outras variáveis e maiores forem os efeitos.
 3. **Modelar $Z$ com o _survey_.** Estima-se $\Pr(Z \mid X)$ com os respondentes (por exemplo, com uma regressão multinomial; no exemplo abaixo, com a região no lugar da UF, porque UFs pequenas podem faltar na amostra) e expande-se o _frame_ [@kastellec2015polarizing]. Isso supõe que a relação entre $Z$ e $X$ na amostra é a da população, o que falha justamente quando a seleção depende de $Z$.
-4. **Calibrar a junta.** Parte-se de uma distribuição conjunta inicial (a do item 3, por exemplo) e ajusta-se por _raking_ até que ela reproduza as margens conhecidas de $Z$ (por UF, por sexo e idade, por cor/raça), mantendo os totais $N_c$ do _frame_ base [@kuriwaki2024geography]. A calibração corrige a composição de $Z$ nas dimensões em que há margens, mas não nas combinações que nenhuma margem cobre. @li2024embedded e @pitts2025multilevel propõem versões em que as células desconhecidas são estimadas dentro do próprio modelo.
+4. **Calibrar a junta.** Parte-se de uma distribuição conjunta inicial (a do item 3, por exemplo) e ajusta-se por _raking_ [@deming1940least] até que ela reproduza as margens conhecidas de $Z$ (por UF, por sexo e idade, por cor/raça), mantendo os totais $N_c$ do _frame_ base. @kuriwaki2024geography usam uma ideia próxima, calibrando as estimativas a totais eleitorais conhecidos. A calibração corrige a composição de $Z$ nas dimensões em que há margens, mas não nas combinações que nenhuma margem cobre. @li2024embedded e @pitts2025multilevel propõem versões em que as células desconhecidas são estimadas dentro do próprio modelo.
 
 ## Em R
 
@@ -65,11 +65,11 @@ bind_rows(População = count(pop, religiao_4cat), Amostra = count(amostra, reli
   pivot_wider(names_from = religiao_4cat, values_from = p)
 ```
 
-Os evangélicos, que têm a atitude com menos frequência, participam menos do painel; as pessoas sem religião, que a têm com mais frequência, participam mais. As duas coisas empurram a média bruta para cima, e nenhuma variável do _frame_ base capta isso.
+Neste mundo, os evangélicos, que têm a atitude com menos frequência, participam menos do painel, e as pessoas sem religião, que a têm com mais frequência, participam mais. As duas coisas empurram a média bruta para cima, e nenhuma variável do _frame_ base capta isso.
 
 ### Cinco _frames_ num Monte Carlo
 
-O Monte Carlo ajusta dois modelos em 200 amostras: o de efeitos fixos sem religião (o do [capítulo 3](03-estimador-mrp.qmd)) e o mesmo modelo com a religião como efeito fixo. O modelo com religião é pós-estratificado com quatro _frames_, um para cada saída da seção anterior. As margens usadas na pós-estratificação sintética e na calibração são as que um analista encontraria publicadas: religião por UF, por sexo e faixa etária e por cor/raça.
+O Monte Carlo ajusta dois modelos em 200 amostras: o de efeitos fixos sem religião (o do [capítulo 3](03-estimador-mrp.qmd)) e o mesmo modelo com a religião como efeito fixo. O modelo com religião é pós-estratificado com quatro _frames_, um para cada saída da seção anterior. A pós-estratificação sintética usa só a religião por UF; a calibração usa as três margens que um analista encontraria publicadas: religião por UF, por sexo e faixa etária e por cor/raça. A comparação entre as duas mistura, portanto, o método e a quantidade de informação usada.
 
 ```{r}
 #| label: c7-frames
@@ -176,20 +176,20 @@ estimar_c7 <- function(r) {
 
 mc7 <- com_cache("c7_monte_carlo",
                  list(mundo$chave, 200, deparse(estimar_c7), deparse(calibrar_junta),
-                      deparse(agregar_c7)),
+                      deparse(agregar_c7), margens_rel, uf_regiao, frame_sintetico$N),
                  monte_carlo(200, estimar_c7))
 
 res_c7 <- mc7 |>
   left_join(verdades_c7, by = "estimando") |>
   group_by(metodo, estimando) |>
   summarise(vies = 100 * mean(est - verdade), reqm = 100 * sqrt(mean((est - verdade)^2)),
-            .groups = "drop") |>
+            ep_mc = 100 * sd(est) / sqrt(n()), .groups = "drop") |>
   mutate(dimensao = if_else(estimando == "Total", "Total", sub(":.*$", "", estimando)))
 ```
 
 ```{r}
 #| label: tbl-c7-mc
-#| tbl-cap: "Viés da estimativa nacional e viés absoluto médio por religião, escolaridade e cor/raça (pontos percentuais), em 200 amostras opt-in em que a participação depende da religião."
+#| tbl-cap: "Viés da estimativa nacional e viés absoluto médio por religião, escolaridade e cor/raça (pontos percentuais), em 200 amostras _opt-in_ em que a participação depende da religião."
 ordem_c7 <- c("Sem religião no modelo", "Junta completa", "Pós-estratificação sintética",
               "Religião modelada pelo survey", "Religião modelada e calibrada a margens")
 res_c7 |>
@@ -202,9 +202,12 @@ res_c7 |>
   pivot_wider(names_from = dimensao, values_from = valor) |>
   arrange(metodo) |>
   select(metodo, Nacional, Religião, Escolaridade, `Cor/raça`) |>
+  mutate(across(-metodo, \(x) if_else(abs(x) < 0.005, 0, x)),   # evita "-0,00"
+         metodo = str_replace(as.character(metodo), "survey", "_survey_")) |>
   gt() |>
+  fmt_markdown(metodo) |>
   fmt_number(-metodo, decimals = 2, dec_mark = ",") |>
-  sub_missing(missing_text = "—") |>
+  sub_missing(missing_text = "–") |>
   cols_label(metodo = "Método") |>
   tab_spanner(label = "Viés absoluto médio", columns = c(Religião, Escolaridade, `Cor/raça`))
 ```
@@ -214,13 +217,14 @@ res_c7 |>
 #| include: false
 v7 <- function(m, e = "Total") res_c7$vies[res_c7$metodo == m & res_c7$estimando == e]
 va7 <- function(m, d) mean(abs(res_c7$vies[res_c7$metodo == m & res_c7$dimensao == d]))
+ep7 <- mean(res_c7$ep_mc[res_c7$estimando == "Total"])
 ```
 
-Sem a religião no modelo, a estimativa nacional erra `r num(v7("Sem religião no modelo"), 2)` pp, e o erro não vem de nenhuma das variáveis do _frame_: é o viés de seleção fora do _frame_ do [capítulo 1](01-amostras-nao-probabilisticas.qmd). Com a religião no modelo e a junta completa, o viés cai para `r num(v7("Junta completa"), 2)` pp, e as estimativas por religião ficam com viés absoluto médio de `r num(va7("Junta completa", "religiao_4cat"), 2)` pp.
+A @tbl-c7-mc resume o Monte Carlo; o erro-padrão de Monte Carlo do viés nacional é de cerca de `r num(ep7, 2)` pp. Sem a religião no modelo, a estimativa nacional erra `r num(v7("Sem religião no modelo"), 2)` pp, e o erro não vem de nenhuma das variáveis do _frame_: é o viés de uma seleção que não é ignorável dado o _frame_ ([capítulo 1](01-amostras-nao-probabilisticas.qmd)). Com a religião no modelo e a junta completa, o viés cai para `r num(v7("Junta completa"), 2)` pp, e as estimativas por religião ficam com viés absoluto médio de `r num(va7("Junta completa", "religiao_4cat"), 2)` pp.
 
 A pós-estratificação sintética, que supõe a religião independente das demais variáveis dentro de cada UF, fica com `r num(v7("Pós-estratificação sintética"), 2)` pp no total e `r num(va7("Pós-estratificação sintética", "religiao_4cat"), 2)` pp por religião. Modelar a religião com o próprio _survey_ reproduz na expansão do _frame_ a composição religiosa distorcida da amostra, com viés de `r num(v7("Religião modelada pelo survey"), 2)` pp. Calibrar essa junta às margens publicadas reduz o viés para `r num(v7("Religião modelada e calibrada a margens"), 2)` pp.
 
-No total nacional, a pós-estratificação sintética e a calibração chegam perto da junta completa neste mundo, em que a religião se soma aos demais efeitos na escala logit. Nas estimativas por religião, a diferença aparece: a sintética erra `r num(va7("Pós-estratificação sintética", "religiao_4cat"), 2)` pp em média, a calibrada `r num(va7("Religião modelada e calibrada a margens", "religiao_4cat"), 2)` pp e a junta completa `r num(va7("Junta completa", "religiao_4cat"), 2)` pp. Supor a religião independente das demais variáveis dentro da UF erra a composição de cada grupo religioso (os evangélicos, por exemplo, não têm a mesma escolaridade dos católicos), e as estimativas desses grupos herdam o erro.
+No total nacional, a pós-estratificação sintética e a calibração chegam perto da junta completa neste mundo, em que a religião se soma aos demais efeitos na escala logit; as diferenças entre elas são da ordem do erro de Monte Carlo. Nas estimativas por religião, a diferença aparece: a sintética erra `r num(va7("Pós-estratificação sintética", "religiao_4cat"), 2)` pp em média, a calibrada `r num(va7("Religião modelada e calibrada a margens", "religiao_4cat"), 2)` pp e a junta completa `r num(va7("Junta completa", "religiao_4cat"), 2)` pp. Supor a religião independente das demais variáveis dentro da UF erra a composição de cada grupo religioso (neste mundo, tirado do Censo 2022, as pessoas sem religião são bem mais jovens que os católicos, e as de outras religiões têm mais escolaridade), e as estimativas desses grupos herdam o erro, mesmo com a religião somando-se aos demais efeitos.
 
 A lição prática é que o _survey_ não serve para estimar a distribuição populacional da variável que está distorcendo a amostra; é preciso ao menos uma margem populacional dela, e, para estimar os próprios grupos dessa variável, de preferência a junta completa ou várias margens cruzadas.
 
@@ -228,9 +232,9 @@ A lição prática é que o _survey_ não serve para estimar a distribuição po
 
 - Uma variável que afeta a participação e o desfecho, mas fica fora do modelo e do _frame_, deixa um viés que nenhuma especificação corrige. Antes de escolher o _frame_, pergunte que variáveis podem estar distorcendo o painel.
 - O _survey_ não informa a distribuição populacional das variáveis pelas quais foi selecionado. Modelar $\Pr(Z \mid X)$ com os respondentes só funciona se a seleção não depender de $Z$ dado $X$.
-- A independência da pós-estratificação sintética é uma hipótese forte fora dos modelos lineares aditivos. Com interações entre $Z$ e as outras variáveis, prefira a calibração a várias margens ou a junta completa.
+- A independência da pós-estratificação sintética é uma hipótese forte. Mesmo num modelo aditivo, ela só acerta o total nacional e as UFs; as estimativas por grupos de $Z$ ou de outras variáveis dependem da composição conjunta. Para esses estimandos, e com interações entre $Z$ e as outras variáveis, prefira a calibração a várias margens ou a junta completa.
 - As categorias de $Z$ precisam ser as mesmas no _survey_ e na fonte das margens. Um questionário sem a opção "espírita", por exemplo, não é comparável a um censo que tem essa categoria sem um mapa explícito entre as duas classificações ([capítulo 6](06-harmonizacao-faltantes.qmd)).
 
 ## Leituras
 
-@leemann2017extending introduzem a pós-estratificação sintética e mostram quando ela equivale à junta verdadeira. @kastellec2015polarizing incluem no MrP uma variável não censitária (a identificação partidária) modelada a partir de pesquisas. @kuriwaki2024geography calibram estimativas a totais eleitorais conhecidos por distrito. @li2024embedded e @pitts2025multilevel tratam de _frames_ em que só se conhecem margens, e @lopezmartin2022multilevel têm um estudo de caso sobre variáveis não censitárias com código em R.
+@leemann2017extending introduzem a pós-estratificação sintética e mostram quando ela equivale à junta verdadeira. @deming1940least propõem o ajuste proporcional iterativo usado no _raking_. @kastellec2015polarizing incluem no MrP uma variável não censitária (a identificação partidária) modelada a partir de pesquisas. @kuriwaki2024geography calibram estimativas a totais eleitorais conhecidos por distrito. @li2024embedded e @pitts2025multilevel tratam de _frames_ em que só se conhecem margens, e @lopezmartin2022multilevel têm um estudo de caso sobre variáveis não censitárias com código em R.

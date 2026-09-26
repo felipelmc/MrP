@@ -65,7 +65,7 @@ y_i &\sim \text{Bernoulli}(\pi_i), \qquad
 \end{aligned}
 $$
 
-onde $t_3(0;\, 2{,}5)$ é uma $t$ de Student com 3 graus de liberdade e escala 2,5, e $\mathcal{N}^+$ é uma normal truncada em zero (meia-normal). A distribuição _a posteriori_ de todos os parâmetros é proporcional ao produto da verossimilhança e dos _priors_,
+onde $t_3(0;\, 2{,}5)$ é uma $t$ de Student com 3 graus de liberdade e escala 2,5, e $\mathcal{N}^+$ é uma normal truncada em zero (meia-normal). No `brms`, o _prior_ do intercepto vale para o intercepto com os preditores centrados na média da amostra (o logit no perfil médio dos respondentes), e não para o $\beta_0$ da categoria de referência. A distribuição _a posteriori_ de todos os parâmetros é proporcional ao produto da verossimilhança e dos _priors_,
 
 $$
 p(\beta_0, \boldsymbol{\beta}, \boldsymbol{\alpha}, \tau \mid \mathbf{y}) \;\propto\; \prod_i \pi_i^{y_i}(1 - \pi_i)^{1 - y_i} \;\prod_j \mathcal{N}(\alpha_j \mid 0, \tau^2)\; p(\beta_0)\, p(\boldsymbol{\beta})\, p(\tau),
@@ -86,11 +86,11 @@ Os valores $\theta^{(1)}, \dots, \theta^{(S)}$ são sorteios da distribuição _
 
 A pós-estratificação é feita sorteio a sorteio, e não sobre as médias dos parâmetros. Se o efeito da escolaridade e o intercepto forem estimados com correlação negativa, por exemplo, os sorteios em que um é alto tendem a ter o outro baixo, e a soma sobre as células leva isso em conta automaticamente.
 
-Uma sutileza: $\theta^{(s)}$ é a proporção esperada sob o modelo (um estimando de superpopulação). A média da população finita, $\bar{Y}$, inclui ainda o sorteio individual de cada pessoa, cuja variância é da ordem de $\bar{Y}(1 - \bar{Y})/N$. Com $N$ na casa dos milhões, essa diferença é desprezível.
+Uma sutileza: $\theta^{(s)}$ é a proporção esperada sob o modelo (um estimando de superpopulação). A média da população finita, $\bar{Y}$, inclui ainda o sorteio individual de cada pessoa, cuja variância é da ordem de $\bar{Y}(1 - \bar{Y})/N$. Para o estimando nacional, com $N$ na casa dos milhões, essa diferença é desprezível. Para um subgrupo $g$, a variância é da ordem de $\bar{Y}_g(1 - \bar{Y}_g)/N_g$, também desprezível enquanto o subgrupo tiver milhares de pessoas.
 
 ### _Priors_ fracamente informativos
 
-Na escala logit, um coeficiente igual a 1 multiplica a razão de chances por $e \approx 2{,}7$, e um coeficiente igual a 3, por cerca de 20. Um _prior_ $\mathcal{N}(0, 1)$ para os efeitos demográficos torna improváveis (cerca de 5% de probabilidade) efeitos maiores que 2 em valor absoluto, o que é compatível com o que se sabe sobre atitudes políticas, e ainda deixa os dados dominarem com amostras de milhares de pessoas. _Priors_ muito vagos, como $\mathcal{N}(0, 10^2)$, parecem neutros mas não são: eles implicam que, antes de ver os dados, probabilidades muito próximas de 0 ou de 1 são as mais plausíveis, o que a seção "Em R" mostra com a distribuição preditiva _a priori_. Para o desvio-padrão entre UFs, a meia-normal $\mathcal{N}^+(0, 1)$ admite desde diferenças nulas até diferenças grandes, e evita a estimativa na fronteira $\hat{\tau} = 0$ que o Bayes empírico produz ([capítulo 2](02-modelos-multinivel.qmd)).
+Na escala logit, um coeficiente igual a 1 multiplica as chances (_odds_) por $e \approx 2{,}7$, isto é, corresponde a uma razão de chances de 2,7, e um coeficiente igual a 3, a uma razão de chances de cerca de 20. Um _prior_ $\mathcal{N}(0, 1)$ para os efeitos demográficos torna improváveis (cerca de 5% de probabilidade) efeitos maiores que 2 em valor absoluto e ainda deixa os dados dominarem com amostras de milhares de pessoas. _Priors_ muito vagos, como $\mathcal{N}(0, 10^2)$, parecem neutros mas não são: eles implicam que, antes de ver os dados, probabilidades muito próximas de 0 ou de 1 são as mais plausíveis, o que a seção "Em R" mostra com a distribuição preditiva _a priori_. Para o desvio-padrão entre UFs, a meia-normal $\mathcal{N}^+(0, 1)$ admite desde diferenças nulas até diferenças grandes. A moda _a posteriori_ de $\tau$ ainda pode ser zero, como a estimativa do Bayes empírico ([capítulo 2](02-modelos-multinivel.qmd)); o que evita a fronteira é usar como estimativa pontual a mediana ou a média _a posteriori_, que são sempre positivas, e propagar a distribuição inteira de $\tau$ para as predições.
 
 ### Como saber se o amostrador funcionou
 
@@ -154,7 +154,7 @@ ggplot(prob_prior, aes(x = pi)) +
   theme(axis.text.y = element_blank())
 ```
 
-Com os _priors_ vagos, `r pct(mean(prob_prior$pi[prob_prior$prior != "Fracamente informativos"] < 0.05 | prob_prior$pi[prob_prior$prior != "Fracamente informativos"] > 0.95), 0)` das probabilidades preditas ficam abaixo de 5% ou acima de 95%, contra `r pct(mean(prob_prior$pi[prob_prior$prior == "Fracamente informativos"] < 0.05 | prob_prior$pi[prob_prior$prior == "Fracamente informativos"] > 0.95), 0)` com os _priors_ fracamente informativos. O _prior_ "sem informação" é, na verdade, uma afirmação forte sobre o mundo.
+Com os _priors_ vagos, `r pct(mean(prob_prior$pi[prob_prior$prior != "Fracamente informativos"] < 0.05 | prob_prior$pi[prob_prior$prior != "Fracamente informativos"] > 0.95), 0)` das probabilidades preditas ficam abaixo de 5% ou acima de 95%, contra `r pct(mean(prob_prior$pi[prob_prior$prior == "Fracamente informativos"] < 0.05 | prob_prior$pi[prob_prior$prior == "Fracamente informativos"] > 0.95), 0)` com os _priors_ fracamente informativos. O _prior_ "sem informação" é, na verdade, uma afirmação forte sobre o mundo. A fração com os _priors_ fracamente informativos também não é pequena, por causa do intercepto: a $t_3$ com escala 2,5 tem caudas pesadas e põe, sozinha, cerca de um terço da massa em logits maiores que 2,9 em valor absoluto, isto é, em probabilidades abaixo de 5% ou acima de 95%. Com 2 mil respondentes, os dados dominam o intercepto, e essa escolha pesa pouco; com poucos dados, um _prior_ mais estreito para o intercepto seria mais razoável.
 
 ### Ajuste e diagnósticos
 
@@ -184,7 +184,7 @@ diagnosticos |>
              ess_bulk = "ESS bulk", ess_tail = "ESS tail")
 ```
 
-O maior $\hat{R}$ é `r num(max(diagnosticos$rhat), 3)`, o menor ESS _bulk_ é `r inteiro(min(diagnosticos$ess_bulk))` e houve `r n_divergentes` transições divergentes. Os sorteios representam bem a distribuição _a posteriori_.
+O maior $\hat{R}$ é `r num(max(diagnosticos$rhat), 3)`, o menor ESS _bulk_ é `r inteiro(min(diagnosticos$ess_bulk))` e `r if (n_divergentes == 0) "não houve transições divergentes" else paste("houve", n_divergentes, "transições divergentes")`. Os sorteios representam bem a distribuição _a posteriori_.
 
 A @fig-c4-ppc compara a proporção observada em cada nível de escolaridade com as proporções em conjuntos de dados simulados a partir do modelo ajustado.
 
@@ -216,7 +216,7 @@ resumo_c4 <- resumir_draws(draws_c4) |>
 
 ```{r}
 #| label: fig-c4-intervalos
-#| fig-cap: "Estimativas MrP numa amostra opt-in: mediana e intervalos de 90% e 95% _a posteriori_, por estimando, e o valor verdadeiro (x)."
+#| fig-cap: "Estimativas MrP numa amostra _opt-in_: mediana e intervalos de 90% e 95% _a posteriori_, por estimando, e o valor verdadeiro (x)."
 #| fig-width: 7
 #| fig-height: 5.5
 resumo_c4 |>
@@ -293,7 +293,7 @@ cobertura_c4 <- mc4 |>
 
 ```{r}
 #| label: tbl-c4-cobertura
-#| tbl-cap: "Cobertura dos intervalos de 90% em 200 amostras opt-in e largura média (pontos percentuais), por dimensão (média entre as categorias)."
+#| tbl-cap: "Cobertura dos intervalos de 90% em 200 amostras _opt-in_ e largura média (pontos percentuais), por dimensão (média entre as categorias)."
 cobertura_c4 |>
   group_by(metodo, dimensao) |>
   summarise(cobertura = mean(cobertura), largura = mean(largura), .groups = "drop") |>
@@ -307,7 +307,7 @@ cobertura_c4 |>
 
 ```{r}
 #| label: fig-c4-cobertura
-#| fig-cap: "Cobertura dos intervalos de 90% por estimando, em 200 amostras opt-in. A faixa cinza mostra a variação esperada da cobertura por acaso quando a cobertura verdadeira é 90%."
+#| fig-cap: "Cobertura dos intervalos de 90% por estimando, em 200 amostras _opt-in_. A faixa cinza mostra a variação esperada da cobertura por acaso quando a cobertura verdadeira é 90%."
 #| fig-width: 7
 #| fig-height: 5.5
 faixa <- 1.96 * sqrt(0.9 * 0.1 / 200)
@@ -333,9 +333,10 @@ cobertura_c4 |>
 cob <- function(m, d) with(filter(cobertura_c4, metodo == m, dimensao == d), mean(cobertura))
 lar <- function(m, d) with(filter(cobertura_c4, metodo == m, dimensao == d), mean(largura))
 div_total <- sum(distinct(mc4, replica, divergentes)$divergentes)
+n_rk <- n_distinct(mc4$replica[mc4$metodo == "Raking"])
 ```
 
-No nível nacional, os intervalos de 90% do MrP contêm a verdade em `r pct(cob("MrP", "Total"), 0)` das amostras, e os do _raking_, em `r pct(cob("Raking", "Total"), 0)`. Nos subgrupos, a cobertura média do MrP é de `r pct(cob("MrP", "faixa_etaria"), 0)` nas faixas etárias e `r pct(cob("MrP", "cor_raca"), 0)` em cor/raça, contra `r pct(cob("Raking", "faixa_etaria"), 0)` e `r pct(cob("Raking", "cor_raca"), 0)` no _raking_. A falha do _raking_ nas faixas etárias vem do viés do [capítulo 3](03-estimador-mrp.qmd): seus intervalos são centrados num valor errado, e a largura (`r num(lar("Raking", "faixa_etaria"))` pp, contra `r num(lar("MrP", "faixa_etaria"))` pp do MrP) não compensa o erro. Ao longo das 200 réplicas houve `r div_total` transições divergentes no total.
+No nível nacional, os intervalos de 90% do MrP contêm a verdade em `r pct(cob("MrP", "Total"), 0)` das amostras, e os do _raking_, em `r pct(cob("Raking", "Total"), 0)`.`r if (n_rk < 200) paste0(" O _raking_ não convergiu em ", 200 - n_rk, " das 200 amostras, e sua cobertura é calculada nas outras ", n_rk, ".") else ""` Nos subgrupos, a cobertura média do MrP é de `r pct(cob("MrP", "faixa_etaria"), 0)` nas faixas etárias e `r pct(cob("MrP", "cor_raca"), 0)` em cor/raça, contra `r pct(cob("Raking", "faixa_etaria"), 0)` e `r pct(cob("Raking", "cor_raca"), 0)` no _raking_. A falha do _raking_ nas faixas etárias vem do viés do [capítulo 3](03-estimador-mrp.qmd): seus intervalos são centrados num valor errado, e a largura (`r num(lar("Raking", "faixa_etaria"))` pp, contra `r num(lar("MrP", "faixa_etaria"))` pp do MrP) não compensa o erro. `r if (div_total == 0) "Não houve transições divergentes nas 200 réplicas." else paste0("Ao longo das 200 réplicas houve ", div_total, " transições divergentes no total.")`
 
 A calibração do MrP aqui depende de o modelo estar certo: o mundo sintético foi gerado por um modelo de efeitos principais com efeitos de UF normais, exatamente a estrutura ajustada. O [capítulo 5](05-especificacao-validacao.qmd) mostra o que acontece com a cobertura quando o modelo omite uma interação presente na população, e o [capítulo 7](07-frames-nao-censitarios.qmd), quando a seleção depende de uma variável fora do _frame_.
 
@@ -382,7 +383,7 @@ medias = {
 media_geral = medias.reduce((s, x) => s + x, 0) / J
 Q = medias.reduce((s, x) => s + (x - media_geral) ** 2, 0)
 tau_reml = Math.sqrt(Math.max(0, Q / (J - 1) - se2))
-grade = d3.range(0, 1.2001, 0.002)
+grade = d3.range(0, Math.max(1.2, 5 * escala) + 1e-9, 0.002)
 logpost = grade.map((t) => {
   const v = t ** 2 + se2;
   return -((J - 1) / 2) * Math.log(v) - Q / (2 * v) - t ** 2 / (2 * escala ** 2);
@@ -393,10 +394,15 @@ dens = {
   const soma = d.reduce((s, x) => s + x, 0) * 0.002;
   return grade.map((t, i) => ({tau: t, densidade: d[i] / soma}));
 }
-mediana = {
+quantil = (q) => {
   let acum = 0;
-  for (const p of dens) { acum += p.densidade * 0.002; if (acum >= 0.5) return p.tau; }
+  for (const p of dens) { acum += p.densidade * 0.002; if (acum >= q) return p.tau; }
+  return dens[dens.length - 1].tau;
 }
+mediana = quantil(0.5)
+// o grafico mostra a grade ate o quantil 99,5% (ou ate os valores marcados)
+limite_x = Math.max(quantil(0.995), tau_real, tau_reml) * 1.1
+dens_plot = dens.filter((p) => p.tau <= limite_x)
 ```
 
 ```{ojs}
@@ -406,8 +412,8 @@ Plot.plot({
   x: {label: "τ →", tickFormat: (d) => fmt(d, 1)},
   y: {label: "↑ Densidade a posteriori", tickFormat: (d) => fmt(d, 1)},
   marks: [
-    Plot.areaY(dens, {x: "tau", y: "densidade", fill: pal.accent, fillOpacity: 0.2}),
-    Plot.lineY(dens, {x: "tau", y: "densidade", stroke: pal.accent, strokeWidth: 2}),
+    Plot.areaY(dens_plot, {x: "tau", y: "densidade", fill: pal.accent, fillOpacity: 0.2}),
+    Plot.lineY(dens_plot, {x: "tau", y: "densidade", stroke: pal.accent, strokeWidth: 2}),
     Plot.ruleX([tau_reml], {stroke: pal.ink3, strokeDasharray: "4,3"}),
     Plot.ruleX([tau_real], {stroke: pal.ink, strokeWidth: 1.5})
   ]
@@ -431,7 +437,7 @@ se2    <- sigma^2 / n
 medias <- tau_real * rnorm(J) + sqrt(se2) * rnorm(J)
 Q      <- sum((medias - mean(medias))^2)
 
-grade   <- seq(0, 1.2, by = 0.002)
+grade   <- seq(0, max(1.2, 5 * escala), by = 0.002)
 v       <- grade^2 + se2
 logpost <- -((J - 1) / 2) * log(v) - Q / (2 * v) - grade^2 / (2 * escala^2)
 dens    <- exp(logpost - max(logpost))

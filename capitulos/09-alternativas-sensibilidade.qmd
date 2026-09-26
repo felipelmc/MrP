@@ -43,10 +43,10 @@ A regressão multinível impõe uma forma aos efeitos: soma na escala logit, com
 Seja $\hat{m}(x)$ um modelo para o desfecho e $\hat{\pi}(x)$ um modelo para a propensão de participar, estimado comparando a amostra com o _frame_. @chen2020doubly mostram que o estimador
 
 $$
-\boxed{\hat{\theta}_{DR} = \frac{\sum_c N_c\, \hat{m}_c}{N} + \frac{\sum_{i \in S} d_i\, \big(y_i - \hat{m}(x_i)\big)}{\sum_{i \in S} d_i}, \qquad d_i = \frac{1}{\hat{\pi}(x_i)},}
+\boxed{\hat{\theta}_{DR} = \frac{\sum_c N_c\, \hat{m}_c}{N} + \frac{\sum_{i \in S} d_i\, \big(y_i - \hat{m}(x_i)\big)}{\sum_{i \in S} d_i}, \qquad d_i = \frac{1}{\hat{\pi}(x_i)}},
 $$
 
-é consistente se um dos dois modelos estiver correto. O primeiro termo é o MrP; o segundo corrige-o com a média ponderada dos resíduos. Se o modelo do desfecho estiver certo, os resíduos têm média zero em cada célula, e a correção some; se o da propensão estiver certo, os pesos reconstituem a população, e a correção remove o viés do modelo do desfecho.
+é consistente se um dos dois modelos estiver correto. O primeiro termo é o MrP; o segundo corrige-o com a média ponderada dos resíduos. Como o segundo termo divide pela soma dos pesos (a normalização de Hájek), basta conhecer $\hat{\pi}(x)$ a menos de uma constante multiplicativa. Se o modelo do desfecho estiver certo, os resíduos têm média zero em cada célula, e a correção some; se o da propensão estiver certo, os pesos reconstituem a população, e a correção remove o viés do modelo do desfecho.
 
 ### MrP como ponderação
 
@@ -54,7 +54,21 @@ O [capítulo 3](03-estimador-mrp.qmd) mostrou que o MrP pode ser escrito como um
 
 ### Sensibilidade à seleção não ignorável
 
-Se a participação depende do desfecho mesmo depois de condicionar em $X$, a estimativa corrigida tem um viés que depende de uma quantidade não identificada: o quanto a seleção depende de $Y$ diretamente. @little2020measures e @andridge2019indices propõem índices que tornam isso explícito. Constrói-se, com as variáveis auxiliares, a melhor predição linear do desfecho (um _proxy_), e um parâmetro $\phi \in [0, 1]$ indexa o quanto a seleção depende do desfecho em vez do _proxy_. Em $\phi = 0$ a seleção é ignorável dado o _proxy_; em $\phi = 1$ depende só do desfecho. O índice é o viés implicado por cada $\phi$, calculado com quantidades observáveis: a correlação entre o _proxy_ e o desfecho na amostra e a diferença entre a média do _proxy_ na amostra e na população. A leitura é a de uma análise de sensibilidade: que grau de seleção pelo desfecho seria preciso para mudar a conclusão?
+Se a participação depende do desfecho mesmo depois de condicionar em $X$, a estimativa corrigida tem um viés que depende de uma quantidade não identificada: o quanto a seleção depende de $Y$ diretamente. @little2020measures, para médias, e @andridge2019indices, para proporções, propõem índices que tornam isso explícito para a média ou a proporção não ajustada da amostra. Constrói-se, com as variáveis auxiliares, a melhor predição linear do desfecho (um _proxy_); para um desfecho binário, o _proxy_ é o preditor linear de um probit, e o desfecho é tratado como a dicotomização de uma variável normal latente. Um parâmetro $\phi \in [0, 1]$ indexa o quanto a seleção depende do desfecho em vez do _proxy_. Em $\phi = 0$ a seleção é ignorável dado o _proxy_; em $\phi = 1$ depende só do desfecho. O índice é o viés implicado por cada $\phi$, calculado com quantidades observáveis: a correlação entre o _proxy_ e o desfecho (ou a variável latente) na amostra e a diferença entre a média do _proxy_ na amostra e na população. A leitura é a de uma análise de sensibilidade: que grau de seleção pelo desfecho seria preciso para mudar a conclusão?
+
+Para uma estimativa de MrP, a mesma pergunta pode ser feita célula a célula. Suponha que, dentro de cada célula $c$, as chances de participar de quem tem $y = 1$ sejam $e^{\lambda}$ vezes as de quem tem $y = 0$, e que a participação seja rara, de modo que a probabilidade de participar seja proporcional a essas chances. Então a proporção entre os respondentes da célula é $\tilde{p}_c = p_c e^{\lambda} / (p_c e^{\lambda} + 1 - p_c)$, e o que o modelo estima é $\tilde{p}_c$, não $p_c$. Invertendo,
+
+$$
+\boxed{p_c = \frac{\tilde{p}_c\, e^{-\lambda}}{\tilde{p}_c\, e^{-\lambda} + 1 - \tilde{p}_c}},
+$$
+
+o que dá uma estimativa corrigida para cada valor de $\lambda$ a partir de uma única amostra: aplica-se a inversão às predições de cada célula, em cada sorteio da posterior, antes de pós-estratificar. Como a derivada de $\tilde{p}_c$ em relação a $\lambda$ em $\lambda = 0$ é $p_c(1 - p_c)$, o viés do MrP para $\lambda$ pequeno é de aproximadamente
+
+$$
+\lambda\, \frac{\sum_c N_c\, p_c (1 - p_c)}{N}.
+$$
+
+O $\lambda$ faz o papel do $\phi$ dos índices acima, numa escala diferente: em vez da fração da dependência da seleção atribuída ao desfecho, uma razão de chances de participação dentro das células.
 
 ## Em R
 
@@ -79,12 +93,12 @@ verdade_int <- bind_rows(
 )
 
 # estimativas nacional e por celula de escolaridade x idade a partir das
-# predicoes para o frame (pi) e, opcionalmente, da correcao DR
-agregar_c9 <- function(frame, pi, amostra = NULL, residuo = NULL, d = NULL) {
-  frame$pi <- pi
+# predicoes do modelo do desfecho para o frame (m) e, opcionalmente, da correcao DR
+agregar_c9 <- function(frame, m, amostra = NULL, residuo = NULL, d = NULL) {
+  frame$m <- m
   est <- bind_rows(
-    tibble(grupo = "Total", est = sum(frame$pi * frame$N) / sum(frame$N)),
-    frame |> group_by(grupo = escol_idade) |> summarise(est = sum(pi * N) / sum(N))
+    tibble(grupo = "Total", est = sum(frame$m * frame$N) / sum(frame$N)),
+    frame |> group_by(grupo = escol_idade) |> summarise(est = sum(m * N) / sum(N))
   )
   if (is.null(residuo)) return(est)
   corr <- bind_rows(
@@ -95,7 +109,9 @@ agregar_c9 <- function(frame, pi, amostra = NULL, residuo = NULL, d = NULL) {
   left_join(est, corr, by = "grupo") |> mutate(est = est + coalesce(corr, 0)) |> select(-corr)
 }
 
-# propensao: amostra (s = 1) empilhada com o frame (s = 0, peso proporcional a N)
+# propensao: amostra (s = 1) empilhada com o frame (s = 0, peso proporcional a N).
+# As odds estimadas sao proporcionais a razao entre a densidade de x na amostra
+# e na populacao, e portanto a pi(x); a constante some na normalizacao de Hajek
 propensao <- function(a, frame, formula) {
   emp <- bind_rows(select(a, all_of(VARS_FRAME)) |> mutate(s = 1, w = 1),
                    select(frame, all_of(VARS_FRAME), N) |>
@@ -145,19 +161,20 @@ estimar_c9_int <- function(r) {
 
 mc9_int <- com_cache("c9_interacao",
                      list(mundo_int$chave, 100, deparse(estimar_c9_int), deparse(agregar_c9),
-                          deparse(propensao), deparse(mrp_bart)),
+                          deparse(propensao), deparse(mrp_bart), deparse(ajustar_glmer),
+                          deparse(celulas), deparse(f_A), deparse(f_B), deparse(f_prop)),
                      monte_carlo(100, estimar_c9_int))
 
 res_c9_int <- mc9_int |>
   left_join(verdade_int, by = "grupo") |>
   group_by(metodo, grupo) |>
   summarise(vies = 100 * mean(est - verdade), reqm = 100 * sqrt(mean((est - verdade)^2)),
-            .groups = "drop")
+            ep_mc = 100 * sd(est) / sqrt(n()), .groups = "drop")
 ```
 
 ```{r}
 #| label: tbl-c9-interacao
-#| tbl-cap: "Viés nacional e, nas 18 combinações de escolaridade e idade, viés absoluto médio e REQM média (pontos percentuais), em 100 amostras opt-in do mundo com interação."
+#| tbl-cap: "Viés nacional e, nas 18 combinações de escolaridade e idade, viés absoluto médio e REQM média (pontos percentuais), em 100 amostras _opt-in_ do mundo com interação."
 ordem_c9 <- c("MrP, efeitos principais", "MrP, interação com pooling",
               "Duplamente robusto", "MrP com BART")
 res_c9_int |>
@@ -168,7 +185,9 @@ res_c9_int |>
             reqm_celulas = mean(reqm[tipo == "celulas"])) |>
   mutate(metodo = factor(metodo, levels = ordem_c9)) |>
   arrange(metodo) |>
+  mutate(metodo = str_replace(as.character(metodo), "pooling", "_pooling_")) |>
   gt() |>
+  fmt_markdown(metodo) |>
   fmt_number(-metodo, decimals = 2, dec_mark = ",") |>
   cols_label(metodo = "Método", vies_nacional = "Viés nacional",
              vies_celulas = "Viés nas células", reqm_celulas = "REQM nas células")
@@ -181,13 +200,16 @@ vc9 <- function(m, col = "vies") {
   x <- res_c9_int |> filter(metodo == m, grupo != "Total")
   mean(abs(x[[col]]))
 }
+ep_dr <- vc9("Duplamente robusto", "ep_mc")
+# um estimador sem vies teria vies absoluto medio estimado de cerca de 0,8 erro-padrao
+piso_dr <- sqrt(2 / pi) * ep_dr
 ```
 
-O MrP de efeitos principais erra as combinações de escolaridade e idade em `r num(vc9("MrP, efeitos principais"), 2)` pp em média. O estimador duplamente robusto, com o mesmo modelo errado para o desfecho e um modelo de propensão com a forma da seleção, reduz esse viés para `r num(vc9("Duplamente robusto"), 2)` pp, ao custo de uma REQM de `r num(vc9("Duplamente robusto", "reqm"), 2)` pp, contra `r num(vc9("MrP, efeitos principais", "reqm"), 2)` pp do MrP: os pesos inversos à propensão são variáveis. O MrP com a interação com _pooling_ ajustado com `lme4` fica com `r num(vc9("MrP, interação com pooling"), 2)` pp de viés e `r num(vc9("MrP, interação com pooling", "reqm"), 2)` pp de REQM (a variância da interação costuma ser estimada em zero, como no [capítulo 5](05-especificacao-validacao.qmd)), e o MrP com BART, com `r num(vc9("MrP com BART"), 2)` e `r num(vc9("MrP com BART", "reqm"), 2)` pp. O BART capta parte da interação sem a variância dos pesos do estimador duplamente robusto; aqui, é o método com a menor REQM, e o duplamente robusto, o de menor viés.
+A @tbl-c9-interacao resume o Monte Carlo. O MrP de efeitos principais erra as combinações de escolaridade e idade em `r num(vc9("MrP, efeitos principais"), 2)` pp em média. O estimador duplamente robusto, com o mesmo modelo errado para o desfecho e um modelo de propensão com a forma da seleção, reduz esse viés para `r num(vc9("Duplamente robusto"), 2)` pp. Com 100 réplicas, o erro-padrão de Monte Carlo do viés de cada célula é de cerca de `r num(ep_dr, 2)` pp para esse estimador, e mesmo um estimador sem viés teria um viés absoluto médio estimado de cerca de `r num(piso_dr, 2)` pp; `r if (vc9("Duplamente robusto") < 1.5 * piso_dr) "o viés que resta está nessa ordem e não se distingue de zero" else "o viés que resta é maior que isso"`. O custo é a REQM: `r num(vc9("Duplamente robusto", "reqm"), 2)` pp, contra `r num(vc9("MrP, efeitos principais", "reqm"), 2)` pp do MrP, porque os pesos inversos à propensão são variáveis. O MrP com a interação com _pooling_ ajustado com `lme4` fica com `r num(vc9("MrP, interação com pooling"), 2)` pp de viés e `r num(vc9("MrP, interação com pooling", "reqm"), 2)` pp de REQM; no [capítulo 5](05-especificacao-validacao.qmd), a variância dessa interação estimada pelo `lme4` foi zero na maior parte das amostras, e o modelo volta a ser o de efeitos principais. O MrP com BART fica com `r num(vc9("MrP com BART"), 2)` e `r num(vc9("MrP com BART", "reqm"), 2)` pp. O BART capta parte da interação sem a variância dos pesos do estimador duplamente robusto; aqui, é o método com a menor REQM, e o duplamente robusto, o de menor viés.
 
-### Seleção fora do _frame_: ninguém corrige
+### Seleção fora do _frame_: ninguém corrige por completo
 
-No mundo do [capítulo 7](07-frames-nao-censitarios.qmd), a participação depende da religião, que não está no _frame_ base. O Monte Carlo aplica os mesmos métodos, todos sem a religião.
+No mundo do [capítulo 7](07-frames-nao-censitarios.qmd), a participação depende da religião, que não está no _frame_ base. O Monte Carlo aplica três dos métodos, todos sem a religião: o MrP de efeitos principais, o estimador duplamente robusto e o MrP com BART, com a média bruta como referência.
 
 ```{r}
 #| label: c9-mc-religiao
@@ -212,7 +234,8 @@ estimar_c9_rel <- function(r) {
 
 mc9_rel <- com_cache("c9_religiao",
                      list(mundo_rel$chave, 100, deparse(estimar_c9_rel), deparse(agregar_c9),
-                          deparse(propensao), deparse(mrp_bart)),
+                          deparse(propensao), deparse(mrp_bart), deparse(ajustar_glmer),
+                          deparse(celulas), deparse(f_A), deparse(f_prop_rel)),
                      monte_carlo(100, estimar_c9_rel))
 
 res_c9_rel <- mc9_rel |>
@@ -244,7 +267,8 @@ estimar_c9_sens <- function(r) {
 }
 
 mc9_sens <- com_cache("c9_sensibilidade",
-                      list(base$chave, 100, lambdas, deparse(estimar_c9_sens)),
+                      list(base$chave, 100, lambdas, deparse(estimar_c9_sens),
+                           deparse(ajustar_glmer), deparse(f_A)),
                       monte_carlo(100, estimar_c9_sens))
 
 res_c9_sens <- mc9_sens |>
@@ -256,7 +280,7 @@ res_c9_sens <- mc9_sens |>
 
 ```{r}
 #| label: fig-c9-sensibilidade
-#| fig-cap: "Viés do MrP quando a participação depende diretamente do desfecho, em função de λ (as odds de participar de quem tem a atitude são multiplicadas por e^λ). Pontos: viés médio em 100 amostras; barras: 90% das amostras."
+#| fig-cap: "Viés do MrP quando a participação depende diretamente do desfecho, em função de λ (as _odds_ de participar de quem tem a atitude são multiplicadas por e^λ). Pontos: viés médio em 100 amostras; barras: 90% das amostras."
 #| fig-width: 7
 #| fig-height: 3.2
 ggplot(res_c9_sens, aes(x = lambda, y = vies)) +
@@ -273,15 +297,38 @@ ggplot(res_c9_sens, aes(x = lambda, y = vies)) +
 #| include: false
 ajuste_sens <- lm(vies ~ 0 + lambda, data = res_c9_sens)
 por_decimo  <- coef(ajuste_sens)[[1]] / 10
+# aproximacao linear: 0,1 x media de p(1 - p) na populacao, em pp
+aprox_decimo <- 100 * 0.1 * mean(pop_base$prob * (1 - pop_base$prob))
 ```
 
-Cada décimo de $\lambda$ (uma razão de chances de participação de cerca de 1,1 entre quem tem e quem não tem a atitude, dado $X$) acrescenta cerca de `r num(por_decimo, 1)` pp de viés à estimativa do MrP. Com $\lambda = 0{,}5$, isto é, com chances (_odds_) de participação 65% maiores para quem tem a atitude, o viés chega a `r num(res_c9_sens$vies[res_c9_sens$lambda == 0.5], 1)` pp. Nenhum dado da amostra informa $\lambda$; a análise de sensibilidade mostra o quanto a conclusão depende dele, e a discussão substantiva (há razões para achar que quem tem a atitude participa mais de painéis _online_, mesmo dentro dos grupos do _frame_?) diz que valores são plausíveis.
+A @fig-c9-sensibilidade mostra que cada décimo de $\lambda$ (uma razão de chances de participação de cerca de 1,1 entre quem tem e quem não tem a atitude, dado $X$) acrescenta cerca de `r num(por_decimo, 1)` pp de viés à estimativa do MrP. A aproximação linear da seção de formalização dá `r num(aprox_decimo, 1)` pp por décimo. Com $\lambda = 0{,}5$, isto é, com chances (_odds_) de participação 65% maiores para quem tem a atitude, o viés chega a `r num(res_c9_sens$vies[res_c9_sens$lambda == 0.5], 1)` pp. Nenhum dado da amostra informa $\lambda$; a análise de sensibilidade mostra o quanto a conclusão depende dele, e a discussão substantiva (há razões para achar que quem tem a atitude participa mais de painéis _online_, mesmo dentro dos grupos do _frame_?) diz que valores são plausíveis.
+
+O Monte Carlo acima mede o viés com a verdade conhecida. Com uma amostra real, o que se faz é a inversão da seção de formalização: para cada $\lambda$, corrigem-se as predições das células e pós-estratifica-se de novo. Na amostra abaixo, a seleção tem $\lambda = 0{,}3$, o que o analista não sabe.
+
+```{r}
+#| label: c9-ajuste-lambda
+set.seed(91)
+a_sens  <- amostrar_optin(mutate(pop_base, odds_sel = odds_sel * exp(0.3 * y)))
+m_sens  <- ajustar_glmer(f_A, "y", a_sens)
+fr_sens <- frame_populacao(pop_base)
+p_til   <- predict(m_sens, fr_sens, type = "response", allow.new.levels = TRUE)
+
+# proporcao na populacao implicada pela proporcao entre os respondentes, dado lambda
+inverter <- function(p, l) p * exp(-l) / (p * exp(-l) + 1 - p)
+corrigidas <- tibble(
+  lambda     = lambdas,
+  estimativa = map_dbl(lambdas, \(l) sum(inverter(p_til, l) * fr_sens$N) / sum(fr_sens$N))
+)
+corrigidas
+```
+
+A estimativa com $\lambda = 0$ é o MrP de sempre, `r pct(corrigidas$estimativa[1])`, contra uma verdade de `r pct(base$verdade)`. A corrigida com o valor verdadeiro, $\lambda = 0{,}3$, é de `r pct(corrigidas$estimativa[corrigidas$lambda == 0.3])`. Como $\lambda$ não é conhecido, o que se reporta é a lista inteira: a estimativa vai de `r pct(max(corrigidas$estimativa))` a `r pct(min(corrigidas$estimativa))` quando $\lambda$ vai de 0 a 0,5, e a pergunta substantiva é que valores de $\lambda$ são plausíveis. Com um modelo `brms`, a inversão se aplica às predições de cada sorteio da posterior, e o intervalo de cada $\lambda$ sai da pós-estratificação por sorteio.
 
 ## Armadilhas
 
 - Trocar o modelo não troca a hipótese. Métodos de aprendizado de máquina e estimadores duplamente robustos corrigem erros de especificação, mas continuam supondo que a seleção é ignorável dado o que se observa.
 - A dupla robustez tem custo: os pesos inversos à propensão podem ser muito variáveis, e o estimador fica menos preciso que o MrP quando o modelo do desfecho está razoável.
-- Métodos com muitos graus de liberdade precisam de dados. Com 2 mil respondentes e milhares de células, um BART pode fazer pouco mais que um modelo aditivo, e a vantagem aparece sobretudo em amostras grandes com interações fortes.
+- Métodos com muitos graus de liberdade precisam de dados e de sinal. Aqui, com uma interação forte entre duas variáveis, o BART a captou em parte com 2 mil respondentes. Isso não garante o mesmo resultado com interações mais fracas ou espalhadas por muitas variáveis, e @goplerud2024reevaluating encontra desempenho comparável entre esses métodos e modelos hierárquicos com interações e _pooling_ adequado.
 - A sensibilidade só é informativa se os valores do parâmetro forem discutidos substantivamente. Um intervalo de vieses sem uma discussão do que é plausível não orienta decisão nenhuma.
 
 ## Leituras

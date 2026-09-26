@@ -5,14 +5,16 @@
 # painel distorce. Fica fora de R/mundo.R para nao mudar a chave de cache dos
 # capitulos anteriores.
 #   - y_int:   desfecho de interesse
-#   - y_bench: "benchmark" com a mesma estrutura de interacao e efeitos
-#              principais diferentes (o analista conheceria seu valor real)
+#   - y_bench: "benchmark" com a mesma interacao e os mesmos efeitos de
+#              escolaridade e idade, mas intercepto, cor/raca, sexo e UFs
+#              diferentes (o analista conheceria seu valor real)
 # Uso: source(here::here("R/mundo.R")); source(here::here("R/mundo_interacao.R"))
 # =============================================================================
 
 # Desvios (escala logit) que se somam aos efeitos principais de PARAMETROS,
 # por escolaridade (linhas) e faixa etaria (colunas). O efeito do ensino
-# superior e maior entre os jovens e some entre os mais velhos.
+# superior e maior entre os jovens (0,9 + 0,5 = 1,4) e pequeno entre os mais
+# velhos (0,9 - 0,7 = 0,2).
 INTERACAO <- rbind(
   "Ensino Fundamental" = c(0, 0, 0, 0, 0, 0),
   "Ensino Médio"       = c(0.25, 0.2, 0, -0.1, -0.25, -0.35),
@@ -20,7 +22,8 @@ INTERACAO <- rbind(
 )
 colnames(INTERACAO) <- NIVEIS$faixa_etaria
 
-# Parametros do benchmark: efeitos principais diferentes, mesma interacao
+# Parametros do benchmark: intercepto, cor/raca, sexo e UFs (semente)
+# diferentes; mesmos efeitos de escolaridade e idade e mesma interacao
 PARAMETROS_BENCH <- modifyList(PARAMETROS, list(
   intercepto   = -0.3,
   cor_raca     = c("Branca" = 0, "Parda" = 0.25, "Preta" = 0.2, "Outras" = 0.1),

@@ -30,9 +30,9 @@ nomes_dim <- c(Total = "Nacional", escolaridade_3cat = "Escolaridade", cor_raca 
 
 ## Intuição
 
-O MrP combina duas fontes: o _survey_, de onde vem o modelo, e o _frame_, de onde vêm os tamanhos das células. A combinação só funciona se as duas fontes falarem da mesma coisa. Se o _frame_ classifica a escolaridade de um jeito e o questionário de outro, a pós-estratificação empurra a amostra para uma composição que não é a da população, e a correção sai errada mesmo com um modelo perfeito. Esse problema de harmonização é banal e comum; neste projeto, ele aconteceu com a própria escolaridade.
+O MrP combina duas fontes: o _survey_, de onde vem o modelo, e o _frame_, de onde vêm os tamanhos das células. A combinação só funciona se as duas fontes falarem da mesma coisa. Se o _frame_ classifica a escolaridade de um jeito e o questionário de outro, a pós-estratificação empurra a amostra para uma composição que não é a da população, e a correção sai errada mesmo com um modelo perfeito. Esse problema de harmonização é banal e comum, e o exemplo da escolaridade na PNAD Contínua, na seção seguinte, mostra o tamanho que ele pode ter.
 
-Dois problemas parecidos vêm do lado do _survey_. Os respondentes podem declarar uma característica de forma errada, como quem exagera a própria escolaridade ou não lembra em quem votou. E podem deixar de responder, seja ao desfecho, seja a uma variável usada no modelo. Em cada caso, a pergunta é a mesma: a falha depende de algo que o modelo leva em conta? Se depende só das variáveis do _frame_, o MrP absorve o problema; se depende do próprio desfecho, não.
+Dois problemas parecidos vêm do lado do _survey_. Os respondentes podem declarar uma característica de forma errada, como quem exagera a própria escolaridade ou não lembra em quem votou. E podem deixar de responder, seja ao desfecho, seja a uma variável usada no modelo. Para a não resposta, a pergunta é se a falha depende de algo que o modelo leva em conta: se depende só das variáveis do _frame_, o MrP absorve o problema; se depende do próprio desfecho, não. O erro de medição é diferente: mesmo um erro que dependa só das variáveis do _frame_ enviesa as estimativas, porque mistura células.
 
 ## Formalização
 
@@ -50,41 +50,41 @@ Um exemplo concreto vem da PNAD Contínua 2022. Classificar a escolaridade pelo 
 
 ### Erro de medição no _survey_
 
-Agora o _frame_ está certo, mas o respondente declara $X^*$ em vez de $X$. O modelo estima $\mathbb{E}[Y \mid X^* = c]$, e, se o erro não depender de $Y$ dado $X$,
+Agora o _frame_ está certo, mas o respondente declara $X^*$ em vez de $X$. O modelo é ajustado nos respondentes ($R = 1$) e estima $\mathbb{E}[Y \mid X^* = c, R = 1]$. Se o erro não depender de $Y$ dado $X$ e a seleção for ignorável dado $X$,
 
 $$
-\mathbb{E}[Y \mid X^* = c] = \sum_{c'} \Pr(X = c' \mid X^* = c)\; \mathbb{E}[Y \mid X = c'] .
+\mathbb{E}[Y \mid X^* = c, R = 1] = \sum_{c'} \Pr(X = c' \mid X^* = c, R = 1)\; \mathbb{E}[Y \mid X = c'] .
 $$
 
-Cada célula declarada mistura células verdadeiras. Se parte das pessoas com ensino fundamental declara ter ensino médio, a média estimada para o "médio" fica mais baixa do que a verdadeira, e a pós-estratificação, que usa a composição verdadeira da população, aplica essa média errada a toda a população com ensino médio. O voto declarado é o caso mais relevante em pesquisas eleitorais: a abstenção costuma ser subdeclarada, e o voto no vencedor, superdeclarado.
+Cada célula declarada mistura células verdadeiras, com pesos dados pela composição da amostra. Se parte das pessoas com ensino fundamental declara ter ensino médio, a média estimada para o "médio" fica mais baixa do que a verdadeira, e a pós-estratificação, que usa a composição verdadeira da população, aplica essa média errada a toda a população com ensino médio. O tamanho do erro depende de quantas pessoas com ensino fundamental há na amostra, e não na população. O voto declarado é um caso relevante em pesquisas eleitorais, porque a lembrança do voto pode divergir do voto dado.
 
 ### "Não sei" e "não quero responder"
 
-As duas respostas são diferentes. "Não sei" é uma resposta: diz algo sobre a pessoa e deve entrar no modelo como categoria, com um desfecho categórico. "Não quero responder" é um dado faltante. Para o desfecho, vale o seguinte resultado.
+As duas respostas são diferentes. "Não sei" é uma resposta: diz algo sobre a pessoa e deve entrar no modelo como categoria, com um desfecho categórico ([capítulo 8](08-alem-do-binario.qmd)). "Não quero responder" é um dado faltante. Para o desfecho, vale o seguinte resultado.
 
 ::: {#thm-faltante}
 ## Não resposta ao desfecho
-Seja $M_i = 1$ se a pessoa $i$ não respondeu ao desfecho. Se $M \perp\!\!\!\perp Y \mid X, R = 1$ (a não resposta é aleatória condicionalmente às variáveis do modelo), então $\mathbb{E}[Y \mid X = x, R = 1, M = 0] = \mathbb{E}[Y \mid X = x, R = 1]$, e o MrP ajustado só com os casos completos continua consistente.
+Seja $M_i = 1$ se a pessoa $i$ não respondeu ao desfecho. Suponha que a seleção seja ignorável, $Y \perp\!\!\!\perp R \mid X$; que a não resposta seja aleatória condicionalmente às variáveis do modelo, $M \perp\!\!\!\perp Y \mid X, R = 1$; que haja respondentes em todas as células, $\Pr(M = 0 \mid X = x, R = 1) > 0$; e que o modelo esteja bem especificado. Então $\mathbb{E}[Y \mid X = x, R = 1, M = 0] = \mathbb{E}[Y \mid X = x]$, e o MrP ajustado só com os casos completos continua consistente.
 :::
 
 ::: prova
-A independência condicional dá $\mathbb{E}[Y \mid X = x, R = 1, M = 0] = \mathbb{E}[Y \mid X = x, R = 1]$. Pela ignorabilidade da seleção, essa média é $\mathbb{E}[Y \mid X = x]$, e a pós-estratificação usa os tamanhos populacionais $N_c$, que não dependem de quem respondeu.
+Pela definição de probabilidade condicional, $p(y \mid x, R = 1, M = 0) = \Pr(M = 0 \mid y, x, R = 1)\, p(y \mid x, R = 1) / \Pr(M = 0 \mid x, R = 1)$, com denominador positivo pela terceira hipótese. Pela segunda, $\Pr(M = 0 \mid y, x, R = 1) = \Pr(M = 0 \mid x, R = 1)$, e a razão é 1: a distribuição de $Y$ nos casos completos de cada célula é a mesma de todos os respondentes da célula. Pela primeira hipótese, $p(y \mid x, R = 1) = p(y \mid x)$. Com o modelo bem especificado, o ajuste nos casos completos estima $\mathbb{E}[Y \mid X = x]$ em cada célula, e a pós-estratificação usa os tamanhos populacionais $N_c$, que não dependem de quem respondeu.
 :::
 
 Se a não resposta depende do próprio desfecho (não aleatória), nenhum ajuste por $X$ a corrige. Para variáveis explicativas faltantes, como a cor/raça de quem não quis declarar, descartar os casos incompletos é seguro se a falta não depender do desfecho; se depender, a imputação múltipla com um modelo de imputação que inclua o desfecho recupera a informação, desde que a falta seja aleatória condicionalmente ao que entra nesse modelo.
 
 ### Imputação múltipla e MrP
 
-Na imputação múltipla, cada valor faltante é preenchido $m$ vezes com sorteios de sua distribuição condicional, gerando $m$ bases completas. No MrP bayesiano, ajusta-se o modelo em cada base e juntam-se os sorteios da distribuição _a posteriori_ das $m$ bases antes de pós-estratificar; a incerteza da imputação entra automaticamente, pela variação entre as bases. No `brms`, `brm_multiple()` faz isso.
+Na imputação múltipla, cada valor faltante é preenchido $m$ vezes com sorteios de sua distribuição condicional, gerando $m$ bases completas. No MrP bayesiano, ajusta-se o modelo em cada base e juntam-se os sorteios da distribuição _a posteriori_ das $m$ bases antes de pós-estratificar; a incerteza da imputação entra pela variação entre as bases. Para que a mistura dos sorteios aproxime bem a distribuição _a posteriori_, o número de imputações precisa ser grande, bem maior que as cinco usuais para estimativas pontuais [@zhou2010note]. No `brms`, `brm_multiple()` faz isso.
 
 ## Em R
 
-### Seis falhas num Monte Carlo
+### Cinco falhas e um remédio num Monte Carlo
 
 O Monte Carlo abaixo aplica o MrP de efeitos fixos (o do [capítulo 3](03-estimador-mrp.qmd)) em 200 amostras _opt-in_, sob sete situações:
 
 1. referência, sem nenhuma falha;
-2. _frame_ com outra classificação da escolaridade, reproduzindo as taxas da PNAD Contínua descritas acima;
+2. _frame_ com outra classificação da escolaridade, reproduzindo as taxas nacionais da PNAD Contínua descritas acima (a reclassificação é sorteada independentemente da idade e da UF, enquanto na PNAD Contínua quem frequentou um nível sem concluí-lo se concentra entre os jovens);
 3. escolaridade declarada com erro: 15% das pessoas com ensino fundamental declaram ter ensino médio;
 4. não resposta ao desfecho aleatória dado $X$: 20% entre quem tem ensino fundamental, 10% no médio e 5% no superior;
 5. não resposta ao desfecho não aleatória: 20% entre quem tem a atitude e 5% entre quem não tem;
@@ -167,20 +167,20 @@ estimar_c6 <- function(r) {
 
 mc6 <- com_cache("c6_monte_carlo",
                  list(mundo$chave, 200, deparse(estimar_c6), deparse(mrp_pontual),
-                      p_fund_medio, p_medio_sup),
+                      deparse(ajustar_m5), deparse(f_m5), frame_errado$N),
                  monte_carlo(200, estimar_c6))
 
 res_c6 <- mc6 |>
   left_join(verdades_c6, by = "estimando") |>
   group_by(cenario, estimando) |>
   summarise(vies = 100 * mean(est - verdade), reqm = 100 * sqrt(mean((est - verdade)^2)),
-            .groups = "drop") |>
+            ep_mc = 100 * sd(est) / sqrt(n()), .groups = "drop") |>
   mutate(dimensao = if_else(estimando == "Total", "Total", sub(":.*$", "", estimando)))
 ```
 
 ```{r}
 #| label: tbl-c6-mc
-#| tbl-cap: "Viés da estimativa nacional e viés absoluto médio nos subgrupos de escolaridade e de cor/raça (pontos percentuais), em 200 amostras opt-in, por situação."
+#| tbl-cap: "Viés da estimativa nacional e viés absoluto médio nos subgrupos de escolaridade e de cor/raça (pontos percentuais), em 200 amostras _opt-in_, por situação."
 res_c6 |>
   group_by(cenario, dimensao) |>
   summarise(valor = if_else(first(dimensao) == "Total", mean(vies), mean(abs(vies))),
@@ -188,7 +188,10 @@ res_c6 |>
   mutate(dimensao = nomes_dim[dimensao]) |>
   pivot_wider(names_from = dimensao, values_from = valor) |>
   select(cenario, Nacional, Escolaridade, `Cor/raça`) |>
+  mutate(across(-cenario, \(x) if_else(abs(x) < 0.005, 0, x)),   # evita "-0,00"
+         cenario = str_replace(cenario, "Frame", "_Frame_")) |>
   gt() |>
+  fmt_markdown(cenario) |>
   fmt_number(-cenario, decimals = 2, dec_mark = ",") |>
   cols_label(cenario = "Situação") |>
   tab_spanner(label = "Viés absoluto médio", columns = c(Escolaridade, `Cor/raça`))
@@ -199,15 +202,16 @@ res_c6 |>
 #| include: false
 v6 <- function(c, e = "Total") res_c6$vies[startsWith(res_c6$cenario, c) & res_c6$estimando == e]
 va6 <- function(c, d) mean(abs(res_c6$vies[startsWith(res_c6$cenario, c) & res_c6$dimensao == d]))
+ep6 <- mean(res_c6$ep_mc[res_c6$estimando == "Total"])
 ```
 
-A @tbl-c6-mc resume os resultados. A referência fica praticamente sem viés (`r num(v6("1"), 2)` pp no total nacional). Com o _frame_ classificado de outro jeito, o viés nacional vai a `r num(v6("2"), 2)` pp, sem que nada tenha mudado na amostra ou no modelo; as estimativas por escolaridade erram `r num(va6("2", "escolaridade_3cat"), 2)` pp em média, porque cada nível de escolaridade do _frame_ reúne pessoas de outro nível. A escolaridade declarada com erro produz `r num(v6("3"), 2)` pp no total e `r num(va6("3", "escolaridade_3cat"), 2)` pp em média por escolaridade; o efeito é pequeno neste mundo porque o erro atinge só uma parcela pequena da amostra (15% das pessoas com ensino fundamental, que já são poucas no painel).
+A @tbl-c6-mc resume os resultados. O erro-padrão de Monte Carlo do viés nacional é de cerca de `r num(ep6, 2)` pp em todas as situações, e diferenças menores que o dobro disso não se distinguem do acaso. A referência fica praticamente sem viés (`r num(v6("1"), 2)` pp no total nacional). Com o _frame_ classificado de outro jeito, o viés nacional vai a `r num(v6("2"), 2)` pp, sem que nada tenha mudado na amostra ou no modelo. As estimativas por escolaridade erram `r num(va6("2", "escolaridade_3cat"), 2)` pp em média, contra `r num(va6("1", "escolaridade_3cat"), 2)` pp na referência: como cada célula do _frame_ recebe a predição do seu rótulo, esse erro vem só da composição por idade, sexo, cor/raça e UF das pessoas reclassificadas, que muda a mistura dentro de cada nível. A escolaridade declarada com erro produz `r num(v6("3"), 2)` pp no total, uma diferença de `r num(v6("3") - v6("1"), 2)` pp em relação à referência, e `r num(va6("3", "escolaridade_3cat"), 2)` pp em média por escolaridade; o efeito é pequeno neste mundo porque o erro atinge só uma parcela pequena da amostra (15% das pessoas com ensino fundamental, que já são poucas no painel).
 
-A não resposta ao desfecho que depende só da escolaridade não produz viés (`r num(v6("4"), 2)` pp), como diz o @thm-faltante; a que depende do desfecho produz `r num(v6("5"), 2)` pp, e nenhum ajuste por $X$ a remove. A falta de cor/raça que depende do desfecho enviesa a estimativa com casos completos em `r num(v6("6"), 2)` pp, e a imputação múltipla, com o desfecho no modelo de imputação, reduz o viés para `r num(v6("7"), 2)` pp.
+A não resposta ao desfecho que depende só da escolaridade não produz viés além do da referência (`r num(v6("4"), 2)` pp), como diz o @thm-faltante; a que depende do desfecho produz `r num(v6("5"), 2)` pp, e nenhum ajuste por $X$ a remove. A falta de cor/raça que depende do desfecho enviesa a estimativa com casos completos em `r num(v6("6"), 2)` pp, e a imputação múltipla, com o desfecho no modelo de imputação, reduz o viés para `r num(v6("7"), 2)` pp.
 
 ### Imputação múltipla com `brms`
 
-No MrP bayesiano, a imputação múltipla se combina com o ajuste por `brm_multiple()`, que ajusta o modelo em cada base imputada e junta os sorteios. Numa amostra com a falta de cor/raça da situação 6:
+No MrP bayesiano, a imputação múltipla se combina com o ajuste por `brm_multiple()`, que ajusta o modelo em cada base imputada e junta os sorteios. Numa amostra com a falta de cor/raça da situação 6, com 20 imputações:
 
 ```{r}
 #| label: c6-brm-multiple
@@ -216,10 +220,12 @@ a <- amostrar_optin(pop)
 a_raca <- a |> mutate(cor_raca = replace(cor_raca, runif(n()) < ifelse(y == 1, 0.2, 0.05), NA))
 imp <- mice(select(a_raca, y, estado, sexo, faixa_etaria, escolaridade_3cat, cor_raca) |>
               mutate(estado = factor(estado)),
-            m = 5, printFlag = FALSE, seed = 1)
+            m = 20, printFlag = FALSE, seed = 1)
 
 # brm_multiple() nao aceita file_refit; o resultado fica em com_cache()
-nacional_mi <- com_cache("c6_brm_multiple", list(mundo$chave, deparse(f_m5), 42), {
+nacional_mi <- com_cache("c6_brm_multiple",
+                         list(mundo$chave, deparse(f_m5), 42, imp$m, imp$seed,
+                              sum(is.na(a_raca$cor_raca))), {
   fit_mi <- brm_multiple(
     f_m5, data = imp, family = bernoulli(),
     prior = c(prior(student_t(3, 0, 2.5), class = Intercept),
@@ -233,11 +239,20 @@ c(verdade = mundo$verdade, mediana = median(nacional_mi),
   quantile(nacional_mi, c(0.05, 0.95)))
 ```
 
+```{r}
+#| label: c6-brm-multiple-valores
+#| include: false
+mi_dentro <- mundo$verdade >= quantile(nacional_mi, 0.05) &
+  mundo$verdade <= quantile(nacional_mi, 0.95)
+```
+
+A estimativa nacional é de `r pct(median(nacional_mi))`, com intervalo de 90% de `r pct(quantile(nacional_mi, 0.05))` a `r pct(quantile(nacional_mi, 0.95))`, e a verdade, de `r pct(mundo$verdade)`, `r if (mi_dentro) "dentro do intervalo" else "logo fora do intervalo nesta amostra; com a imputação correta, isso deve acontecer em uma de cada dez amostras, e o Monte Carlo acima, sem viés na situação 7, é a evidência mais forte sobre o método"`.
+
 O `brms` avisa que o $\hat{R}$ pode ficar alto nesse tipo de ajuste: as cadeias de bases diferentes exploram distribuições diferentes, por construção, e o diagnóstico deve ser olhado dentro de cada base.
 
 ## Simulação
 
-A simulação aplica a fórmula do viés de harmonização à escolaridade. As barras mostram a composição da população pelo critério do _survey_ (nível concluído) e pelo critério do _frame_, que põe no nível seguinte uma fração das pessoas de cada nível. O resultado é o viés da estimativa nacional, mesmo com um modelo perfeito.
+A simulação aplica a fórmula do viés de harmonização à escolaridade. As barras mostram a composição da população pelo critério do _survey_ (nível concluído) e pelo critério do _frame_, que põe no nível seguinte uma fração das pessoas de cada nível. O resultado é o viés da estimativa nacional, mesmo com um modelo perfeito. É uma aproximação: usa só a margem da escolaridade e a média de cada nível, sem a composição das células por idade, sexo, cor/raça e UF. No mundo sintético, com as células completas, a diferença entre as situações 2 e 1 do Monte Carlo é de `r num(v6("2") - v6("1"), 2)` pp, um pouco menos que o valor que o painel dá com os parâmetros iniciais.
 
 ::: {.panel-tabset}
 
@@ -313,10 +328,10 @@ p_frame <- c(p[1] * (1 - a), p[2] * (1 - b) + p[1] * a, p[3] + p[2] * b)
 ## Armadilhas
 
 - O _frame_ e o questionário precisam de dicionários compatíveis. Antes de pós-estratificar, compare as definições variável por variável (o que conta como "ensino médio", que idade é usada, que categorias de cor/raça existem) e, quando possível, compare as distribuições marginais do _frame_ com as de outra fonte populacional.
-- Variáveis de pós-estratificação declaradas com erro sistemático, como o voto, não corrigem a composição; podem até piorá-la. Nesses casos, o _frame_ com essa variável serve melhor como análise de sensibilidade.
+- Variáveis de pós-estratificação declaradas com erro sistemático, como o voto, não corrigem a composição; podem até piorá-la. Nesses casos, o _frame_ com essa variável serve melhor como análise de sensibilidade ([capítulo 9](09-alternativas-sensibilidade.qmd)).
 - "Não sei" não é dado faltante. Tratá-lo como faltante muda o estimando: passa a ser a opinião de quem tem opinião, e não a da população.
 - Descartar casos incompletos só é seguro se a falta não depender do desfecho. Quando pode depender, a imputação múltipla com o desfecho no modelo de imputação é a alternativa, mas ela também supõe que a falta seja aleatória dado o que o modelo de imputação usa.
 
 ## Leituras
 
-@kennedy2021know discutem o que o MrP supõe sobre a população e sobre a medição das variáveis. @si2025auxiliary revisam o uso de variáveis auxiliares no MrP, incluindo as que têm erro ou faltam no _survey_. @gelman2020regression (cap. 17) tratam de pós-estratificação e imputação de dados faltantes no mesmo capítulo.
+@kennedy2021know discutem o que o MrP supõe sobre a população e sobre a medição das variáveis. @si2025auxiliary revisa o uso de variáveis auxiliares no MrP, incluindo as que têm erro ou faltam no _survey_. @gelman2020regression (cap. 17) tratam de pós-estratificação e imputação de dados faltantes no mesmo capítulo.
