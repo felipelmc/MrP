@@ -42,3 +42,12 @@ book:
     - referencias.qmd
 
 bibliography: [references.bib]
+
+# Excecao deste livro: coluna de leitura mais larga (tema/largura.scss), por
+# cima do tema da extensao
+format:
+  course-notes-html:
+    theme:
+      light: [_extensions/felipelmc/course-notes/theme/notes-light.scss, tema/largura.scss]
+      dark: [_extensions/felipelmc/course-notes/theme/notes-dark.scss, tema/largura.scss]
+

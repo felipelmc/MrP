@@ -1,0 +1,7 @@
+/*-- scss:defaults --*/
+// Excecao deste livro (ver CLAUDE.md): coluna de leitura de ~820px, cerca de
+// 90 caracteres por linha, mais larga que a do template (670px no layout
+// "docked"), por causa das formulas, tabelas e blocos de codigo. Sem !default,
+// para valer sobre os valores da extensao.
+$grid-body-width: 820px;
+$grid-docked-body-width: 820px;
