@@ -1,0 +1,27 @@
+# saída do Quarto (o CI gera de novo)
+/.quarto/
+**/.quarto/
+/_book/
+/docs/
+*_files/
+render.log
+
+# _freeze/ NÃO é ignorado: o CI usa os resultados congelados
+
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Rdata
+.httr-oauth
+
+# sistema
+.DS_Store
+Thumbs.db
+
+# local
+/literatura/
+/datasets/
+/.claude/
+
+**/*.quarto_ipynb

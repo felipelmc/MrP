@@ -1,0 +1,51 @@
+# Course Notes · configuração do curso.
+# O grosso da configuração (tema, fontes, navbar, freeze, idioma) vem da extensão
+# em _extensions/felipelmc/course-notes. Aqui ficam só os dados deste curso.
+project:
+  type: course-notes
+  render:
+    - index.qmd
+    - guia/*.qmd
+    - aulas/*.qmd
+    - listas/*.qmd
+    - trabalhos/index.qmd
+    - trabalhos/*/index.qmd
+    - referencias.qmd
+
+book:
+  title: "Course Notes"
+  subtitle: "Um template para anotações de disciplina"
+  author: "Felipe Lamarca"
+  date: last-modified
+  site-url: https://felipelamarca.com/Course-Notes-Template/
+  repo-url: https://github.com/felipelmc/Course-Notes-Template
+  repo-actions: [source, issue]
+  navbar:
+    left:
+      - text: "Course Notes"
+        href: index.qmd
+  chapters:
+    - index.qmd
+    - part: "Guia"
+      chapters:
+        - guia/comecando.qmd
+        - guia/escrita.qmd
+        - guia/componentes.qmd
+        - guia/simulacoes.qmd
+        - guia/trabalhos.qmd
+        - guia/publicacao.qmd
+    - part: "Aulas"
+      chapters:
+        - href: aulas/aula-01.qmd
+          text: "01 · O grande experimento de Snow"
+    - part: "Listas"
+      chapters:
+        - listas/index.qmd
+    - part: "Trabalhos"
+      chapters:
+        - trabalhos/index.qmd
+        - trabalhos/snow-tabela-ix/index.qmd
+        - trabalhos/apresentacao/index.qmd
+    - referencias.qmd
+
+bibliography: [references.bib]

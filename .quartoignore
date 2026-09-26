@@ -1,0 +1,10 @@
+# Arquivos que `quarto use template felipelmc/Course-Notes-Template` não copia
+guia/
+_freeze/
+_book/
+trabalhos/snow-tabela-ix/
+trabalhos/apresentacao/
+LICENSE-CONTENT.md
+!CLAUDE.md
+!.github/
+!.gitignore

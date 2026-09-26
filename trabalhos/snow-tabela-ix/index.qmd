@@ -1,0 +1,128 @@
+---
+title: "Quanto a água explica? Uma releitura da Tabela IX de Snow"
+subtitle: "Lista 1 · exemplo do template"
+tipo: Lista
+date: 2026-03-24
+description: "Razões de mortalidade e intervalos de confiança para as três áreas da Tabela IX de Snow (1855), com uma análise de sensibilidade a confundidores."
+image: destaque.png
+image-alt: "Mortes por cólera a cada 10 mil casas, por companhia de água, com intervalos de 95%."
+metodos: [Razão de taxas, Poisson, Sensibilidade]
+dados: ["Snow (1855), Tabela IX"]
+materiais:
+  - {text: PDF, href: snow-tabela-ix.pdf}
+  - {text: Enunciado, href: enunciado.pdf}
+  - {text: Código, href: "https://github.com/felipelmc/Course-Notes-Template/tree/main/trabalhos/snow-tabela-ix"}
+abstract: >
+  Reanaliso a Tabela IX de Snow (1855), que compara a mortalidade por cólera nas casas
+  atendidas pelas companhias Southwark and Vauxhall e Lambeth durante as primeiras sete
+  semanas da epidemia de 1854. A razão de taxas entre as duas companhias é de 8,4, com
+  intervalo de 95% entre 6,8 e 10,3. Uma análise de sensibilidade simples mostra que um
+  confundidor não observado teria de multiplicar o risco por pelo menos 8,4, e estar em
+  todas as casas de uma companhia e em nenhuma da outra, para explicar a diferença sozinho.
+format:
+  pdf:
+    toc: false
+    number-sections: false
+    colorlinks: true
+    fig-pos: H
+    geometry: [top=25mm, left=22mm, right=22mm, bottom=25mm]
+lang: pt-BR
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+::: {.callout-tip .achados}
+## Principais resultados
+- A mortalidade nas casas da Southwark and Vauxhall foi de 315 por 10 mil casas, contra 37 na Lambeth: razão de 8,4 (IC 95%: 6,8 a 10,3).
+- A Lambeth teve mortalidade menor que o resto de Londres (37 contra 55 por 10 mil casas), o que reforça a leitura de que a água dela era mais limpa.
+- Para explicar a diferença sozinho, um confundidor presente em todas as casas de uma companhia e em nenhuma da outra teria de multiplicar o risco por 8,4. Presente em metade das casas, por mais de 15.
+:::
+
+# Dados
+
+```{r}
+#| label: setup
+#| code-fold: false
+library(ggplot2)
+source(here::here("_extensions/felipelmc/course-notes/r/notes.R"))
+
+tabela_ix <- data.frame(
+  area   = c("Southwark and Vauxhall", "Lambeth", "Resto de Londres"),
+  casas  = c(40046, 26107, 256423),
+  mortes = c(1263, 98, 1422)
+)
+tabela_ix$taxa <- 1e4 * tabela_ix$mortes / tabela_ix$casas
+tabela_ix
+```
+
+Os números vêm da Tabela IX de @snow1855mode [p. 86]. A taxa do resto de Londres calculada a partir das contagens (55 por 10 mil) difere da impressa por Snow (59), provavelmente por arredondamento ou por diferença na contagem de casas.
+
+# Razões de taxas
+
+Trato as mortes em cada área como Poisson, com exposição igual ao número de casas. A razão de taxas entre as companhias e seu intervalo saem de um modelo log-linear.
+
+```{r}
+#| label: modelo
+fit <- glm(mortes ~ area + offset(log(casas)), family = poisson,
+           data = transform(tabela_ix, area = relevel(factor(area), "Lambeth")))
+rr <- exp(cbind(estimativa = coef(fit), confint.default(fit)))[-1, ]
+round(rr, 2)
+```
+
+```{r}
+#| label: fig-taxas
+#| fig-cap: "Mortes por cólera a cada 10 mil casas, com intervalos de 95% (Poisson)."
+#| fig-width: 7
+#| fig-height: 3.2
+ic <- with(tabela_ix, data.frame(
+  area, taxa,
+  inf = 1e4 * qgamma(0.025, mortes) / casas,
+  sup = 1e4 * qgamma(0.975, mortes + 1) / casas
+))
+ic$area <- factor(ic$area, levels = rev(ic$area))
+grafico <- ggplot(ic, aes(taxa, area)) +
+  geom_segment(aes(x = inf, xend = sup, yend = area), colour = cn_palette$ink3, linewidth = 0.6) +
+  geom_point(aes(colour = area == "Southwark and Vauxhall"), size = 3.2, show.legend = FALSE) +
+  scale_colour_manual(values = c(`TRUE` = cn_palette$award, `FALSE` = cn_palette$accent)) +
+  labs(x = "Mortes a cada 10 mil casas", y = NULL) +
+  theme_notes(base_size = 12)
+grafico
+```
+
+```{r}
+#| include: false
+ggsave("destaque.png", grafico + theme(plot.margin = margin(18, 24, 18, 18)),
+       width = 8, height = 4.5, dpi = 150, bg = "#F6F6F3")
+```
+
+# Sensibilidade a um confundidor
+
+Suponha um confundidor binário $U$ (por exemplo, pobreza extrema) que multiplica o risco de morte por $\Gamma$ e está presente numa proporção $p_1$ das casas da Southwark and Vauxhall e $p_0$ das casas da Lambeth. Sem efeito nenhum da água, a razão de taxas observada seria
+
+$$
+\text{RR}_U = \frac{1 + (\Gamma - 1)\, p_1}{1 + (\Gamma - 1)\, p_0}.
+$$
+
+```{r}
+#| label: fig-sensibilidade
+#| fig-cap: "Razão de taxas que um confundidor sozinho produziria, com p₀ = 0. A linha tracejada marca a razão observada."
+#| fig-width: 7
+#| fig-height: 3.2
+grade <- expand.grid(gama = seq(1, 12, by = 0.25), p1 = c(0.25, 0.5, 0.75, 1))
+grade$rr <- 1 + (grade$gama - 1) * grade$p1
+ggplot(grade, aes(gama, rr, colour = factor(p1))) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = rr["areaSouthwark and Vauxhall", "estimativa"], linetype = "dashed",
+             colour = cn_palette$ink3) +
+  scale_colour_manual(values = cn_palette$ramp[2:5], name = expression(p[1])) +
+  labs(x = expression(Gamma ~ "(quanto o confundidor multiplica o risco)"), y = "Razão de taxas") +
+  theme_notes(base_size = 12)
+```
+
+Mesmo no caso extremo em que o confundidor está em todas as casas de uma companhia e em nenhuma da outra, ele teria de multiplicar o risco por 8,4 para explicar sozinho a diferença. Com o confundidor em metade das casas da Southwark and Vauxhall, o fator precisaria passar de 15.
+
+# Conclusão
+
+A razão de 8,4 é grande o bastante para resistir a confundidores plausíveis, o que é consistente com o argumento de Snow sobre a mistura das duas redes na p. 75. A análise não substitui o desenho: ela só quantifica o quanto o desenho teria de falhar para mudar a conclusão.

@@ -1,0 +1,49 @@
+---
+title: "Course Notes"
+subtitle: "Um template para anotações de disciplina"
+eyebrow: "Template Quarto · felipelamarca.com"
+byline: "Felipe Lamarca · [código no GitHub](https://github.com/felipelmc/Course-Notes-Template)"
+---
+
+Este é o modelo que uso para publicar as anotações das disciplinas que curso. Cada disciplina vira um livro Quarto com o mesmo desenho: leituras anotadas com citações literais e página, anotações de aula, simulações interativas que rodam no navegador e uma vitrine dos trabalhos entregues. O visual segue o do [meu site](https://felipelamarca.com/), com texto corrido em Newsreader, interface em Geist e código em Geist Mono, nos modos claro e escuro.
+
+O template é distribuído como uma extensão do Quarto, então os repositórios das disciplinas recebem atualizações de tema e de componentes com um único comando.
+
+## Disciplinas que usam o template
+
+| Disciplina | Instituição | Período |
+|:--|:--|:--|
+| [Lego III: inferência causal](https://felipelamarca.com/Lego-III/) | IESP-UERJ | 2026.1 |
+| [Lego II: modelos de regressão linear](https://felipelamarca.com/Lego-II/) | IESP-UERJ | 2025.2 |
+| [Lego I: introdução à pesquisa quantitativa](https://felipelamarca.com/Lego-I/) | IESP-UERJ | 2025.1 |
+| [Pesquisa de Survey](https://felipelamarca.com/Survey-Research/) | IESP-UERJ | 2025.1 |
+
+## Como começar
+
+Para uma disciplina nova, crie o repositório a partir do template e rode o script de configuração:
+
+```bash
+gh repo create felipelmc/Minha-Disciplina --public --template felipelmc/Course-Notes-Template --clone
+cd Minha-Disciplina
+./scripts/novo-curso.sh "Minha Disciplina" "Subtítulo" "IESP-UERJ" "2026.2"
+quarto preview
+```
+
+Para um repositório que já existe, instale a extensão e troque o tipo de projeto no `_quarto.yml` para `course-notes`:
+
+```bash
+quarto add felipelmc/Course-Notes-Template
+```
+
+O passo a passo completo está em [Começando](guia/comecando.qmd).
+
+## O que há neste livro
+
+- O **Guia** documenta o template: [como começar](guia/comecando.qmd), [convenções de escrita](guia/escrita.qmd), [componentes](guia/componentes.qmd), [simulações](guia/simulacoes.qmd), [trabalhos](guia/trabalhos.qmd) e [publicação](guia/publicacao.qmd).
+- A parte **Aulas** tem uma [aula de exemplo](aulas/aula-01.qmd) completa, sobre o experimento natural de John Snow, com uma simulação.
+- As partes **Listas** e **Trabalhos** mostram o [índice de listas](listas/index.qmd) e a [vitrine de trabalhos](trabalhos/index.qmd).
+
+::: {.callout-note}
+## Anotações pessoais
+As notas publicadas com este template são anotações de aluno: registram leituras e aulas do meu ponto de vista e podem conter erros. Citações literais ficam como no original, com a página. Explicações escritas com auxílio de IA aparecem sempre em caixas identificadas.
+:::

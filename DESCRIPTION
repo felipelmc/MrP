@@ -1,0 +1,10 @@
+Package: coursenotes
+Title: Pacotes de R usados nas páginas desta disciplina
+Version: 0.0.1
+Description: Não é um pacote de verdade. Este arquivo lista as dependências de R para
+    instalar localmente com `pak::local_install_deps()` antes de `quarto render`.
+Imports:
+    ggplot2,
+    here,
+    knitr,
+    rmarkdown
