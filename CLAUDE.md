@@ -8,7 +8,7 @@ O texto dos capítulos foi escrito com o Claude, a pedido do autor. Por isso, **
 
 ## Exceção deste livro: coluna de leitura mais larga
 
-A pedido do autor (2026-09-26), a coluna de texto tem 820 px, contra 670 px do template, por causa das fórmulas, tabelas e blocos de código. A sobrescrita fica em `tema/largura.scss`, aplicada por cima do tema da extensão no bloco `format:` do `_quarto.yml` (a única coisa além dos dados do livro e da ordem dos capítulos). Se a mudança for levada ao template, apague os dois.
+A pedido do autor (2026-09-26), a coluna de texto tem 900 px, contra 670 px do template, por causa das fórmulas, tabelas e blocos de código. A sobrescrita fica em `tema/largura.scss`, aplicada por cima do tema da extensão no bloco `format:` do `_quarto.yml` (a única coisa além dos dados do livro e da ordem dos capítulos). Se a mudança for levada ao template, apague os dois.
 
 ## O que é
 
